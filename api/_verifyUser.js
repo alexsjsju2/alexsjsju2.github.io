@@ -8,6 +8,11 @@ export async function verifyUser(req) {
 
   const token = authHeader.split("Bearer ")[1];
   const { auth } = initFirebase();
-  const decoded = await auth.verifyIdToken(token); 
-  return decoded; 
+
+  try {
+    const decoded = await auth.verifyIdToken(token);
+    return decoded; // contiene uid, email, ecc.
+  } catch (err) {
+    throw new Error("Invalid or expired token");
+  }
 }
