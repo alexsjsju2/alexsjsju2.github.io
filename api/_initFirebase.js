@@ -14,3 +14,10 @@ export function initFirebase() {
   db = getFirestore(app);
   return db;
 }
+
+export function verifySecret(req) {
+  const clientSecret = req.headers["authorization"];
+  if (!clientSecret || clientSecret !== `Bearer ${process.env.API_SECRET}`) {
+    throw new Error("Unauthorized");
+  }
+}
