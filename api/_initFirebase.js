@@ -2,19 +2,18 @@ import { initializeApp, cert } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 
-let adminApp = null;
-let db = null;
+let app = null;
 
 export function initFirebase() {
-  if (adminApp) return { db, auth: adminApp.auth() };
+  if (app) return { db: getFirestore(app), auth: getAuth(app) };
+
   if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
-    throw new Error("Missing FIREBASE_SERVICE_ACCOUNT env var");
+    throw new Error("Missing FIREBASE_SERVICE_ACCOUNT");
   }
-  const app = initializeApp({
+
+  app = initializeApp({
     credential: cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)),
   });
-  adminApp = app;
-  db = getFirestore(app);
-  const auth = getAuth(app);
-  return { db, auth };
+
+  return { db: getFirestore(app), auth: getAuth(app) };
 }
