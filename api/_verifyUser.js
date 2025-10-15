@@ -11,7 +11,7 @@ export async function verifyUser(req) {
 
   try {
     const decoded = await auth.verifyIdToken(token);
-    return decoded; // contiene uid, email, ecc.
+    return decoded; 
   } catch (err) {
     throw new Error("Invalid or expired token");
   }
