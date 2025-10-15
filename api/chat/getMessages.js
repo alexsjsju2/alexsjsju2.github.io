@@ -1,35 +1,36 @@
-import { initFirebase } from "./_initFirebase.js";
-import { authenticate } from "./middlewareAuthenticate.js";
+import { initFirebase } from "../_initFirebase.js";
+import { verifyUser } from "../_verifyUser.js";
+import { handleCors } from "../_cors.js";
 
 export default async function handler(req, res) {
-  try {
-    const uid = await authenticate(req, res);
+  if (handleCors(req, res)) return;
 
+  if (req.method !== "GET") {
+    return res.status(405).json({ success: false, error: "Method not allowed" });
+  }
+
+  try {
+    const user = await verifyUser(req);
     const { chatId } = req.query;
-    if (!chatId) {
-      res.status(400).json({ success: false, error: "Missing chatId" });
-      return;
-    }
+    if (!chatId) return res.status(400).json({ success: false, error: "Missing chatId" });
 
     const { db } = initFirebase();
 
-    const msgsSnap = await db
+    const snapshot = await db
       .collection("alexchat")
       .doc("privateChats")
       .collection(chatId)
       .orderBy("createdAt", "asc")
       .get();
 
-    const messages = [];
-    msgsSnap.forEach((doc) => {
-      messages.push({ id: doc.id, ...doc.data() });
-    });
+    const messages = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
 
     res.status(200).json({ success: true, messages });
   } catch (err) {
-    console.error("getMessages error:", err);
-    if (!res.headersSent) {
-      res.status(500).json({ success: false, error: err.message });
-    }
+    console.error(err);
+    res.status(401).json({ success: false, error: err.message });
   }
 }
