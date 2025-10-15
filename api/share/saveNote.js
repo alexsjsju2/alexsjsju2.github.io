@@ -1,35 +1,42 @@
-import { initFirebase, verifySecret } from "./_initFirebase.js";
+import { initFirebase } from "../_initFirebase.js";
+import { verifyUser } from "../_verifyUser.js";
+import { handleCors } from "../_cors.js";
 
 export default async function handler(req, res) {
+  if (handleCors(req, res)) return;
+
+  if (req.method !== "POST") {
+    return res.status(405).json({ success: false, error: "Method not allowed" });
+  }
+
   try {
-    verifySecret(req);
+    const user = await verifyUser(req);
+    const { db } = initFirebase();
 
-    if (req.method !== "POST") {
-      return res.status(405).json({ success: false, error: "Method not allowed" });
-    }
-
-    const { owner, title, content, visibility } = await req.json();
-    if (!owner || !title || !content) {
+    const { title, content, visibility } = req.body;
+    if (!title || !content) {
       return res.status(400).json({ success: false, error: "Missing fields" });
     }
-
-    const db = initFirebase();
 
     const newNote = {
       content,
       meta: {
-        owner,
+        createdAt: new Date(),
+        owner: user.uid,
         title,
         visibility: visibility || "privata",
-        createdAt: new Date(),
       },
     };
 
-    const ref = await db.collection("alexshare").doc("notes").collection("userNotes").add(newNote);
+    const ref = await db
+      .collection("alexshare")
+      .doc("notes")
+      .collection("data")
+      .add(newNote);
 
     res.status(200).json({ success: true, id: ref.id });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(401).json({ success: false, error: err.message });
   }
 }
