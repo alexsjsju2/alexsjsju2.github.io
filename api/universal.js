@@ -1,8 +1,6 @@
-// api/universal.js (secure: requires Firebase ID token - NO x-api-secret fallback)
 const admin = require("firebase-admin");
 const { createClient } = require("@supabase/supabase-js");
 
-// init firebase admin
 let firebaseInitialized = false;
 function ensureFirebase() {
   if (firebaseInitialized) return;
@@ -16,7 +14,6 @@ function ensureFirebase() {
   firebaseInitialized = true;
 }
 
-// init supabase (if needed)
 let supabase = null;
 function initSupabase() {
   if (supabase) return supabase;
@@ -34,7 +31,6 @@ function jsonOk(res, data) {
   return res.status(200).json({ ok:true, data });
 }
 
-// convert marker to FieldValue.serverTimestamp()
 function replaceServerTimestamps(obj) {
   ensureFirebase();
   const FieldValue = admin.firestore.FieldValue;
@@ -54,7 +50,6 @@ function replaceServerTimestamps(obj) {
   return obj;
 }
 
-// apply where array to firestore query
 function applyFirestoreWhere(q, whereArr) {
   if (!Array.isArray(whereArr)) return q;
   for (const w of whereArr) {
@@ -64,7 +59,6 @@ function applyFirestoreWhere(q, whereArr) {
   return q;
 }
 
-// verify firebase id token from Authorization header
 async function verifyFirebaseToken(req) {
   const auth = req.headers.authorization || req.headers.Authorization;
   if (!auth || !auth.startsWith("Bearer ")) throw new Error("Missing Authorization Bearer token");
@@ -72,7 +66,7 @@ async function verifyFirebaseToken(req) {
   ensureFirebase();
   try {
     const decoded = await admin.auth().verifyIdToken(token);
-    return decoded; // { uid, ... }
+    return decoded; 
   } catch (err) {
     throw new Error("Invalid Firebase ID token");
   }
@@ -80,11 +74,9 @@ async function verifyFirebaseToken(req) {
 
 module.exports = async (req, res) => {
   try {
-    // payload
     const payload = req.method === "GET" ? req.query : req.body;
     if (!payload || !payload.database || !payload.action) return jsonError(res, 400, "Missing database/action");
 
-    // AUTH: accept only Firebase ID token
     let user;
     try {
       user = await verifyFirebaseToken(req);
@@ -92,7 +84,6 @@ module.exports = async (req, res) => {
       return jsonError(res, 401, err.message || "Unauthorized");
     }
 
-    // FIRESTORE ops
     if (payload.database === "firestore") {
       ensureFirebase();
       const db = admin.firestore();
@@ -147,7 +138,6 @@ module.exports = async (req, res) => {
       }
     }
 
-    // SUPABASE ops (still require server env keys)
     if (payload.database === "supabase") {
       const sb = initSupabase();
       const action = payload.action;
