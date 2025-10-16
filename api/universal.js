@@ -1,42 +1,42 @@
-
-
+// api/universal.js (secure: requires Firebase ID token - NO x-api-secret fallback)
 const admin = require("firebase-admin");
 const { createClient } = require("@supabase/supabase-js");
 
-let db = null;
-function initFirebase() {
-  if (db) return db;
+// init firebase admin
+let firebaseInitialized = false;
+function ensureFirebase() {
+  if (firebaseInitialized) return;
   if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
-    throw new Error("Missing FIREBASE_SERVICE_ACCOUNT env var");
+    throw new Error("FIREBASE_SERVICE_ACCOUNT missing on server");
   }
   const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
   if (!admin.apps.length) {
-    admin.initializeApp({
-      credential: admin.credential.cert(sa),
-    });
+    admin.initializeApp({ credential: admin.credential.cert(sa) });
   }
-  db = admin.firestore();
-  return db;
+  firebaseInitialized = true;
 }
 
+// init supabase (if needed)
 let supabase = null;
 function initSupabase() {
   if (supabase) return supabase;
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env var");
+  if (!url || !key) throw new Error("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing");
   supabase = createClient(url, key, { auth: { persistSession: false } });
   return supabase;
 }
 
-function jsonError(res, status = 400, message = "Bad request") {
-  return res.status(status).json({ ok: false, error: message });
+function jsonError(res, status=400, msg="Bad request") {
+  return res.status(status).json({ ok:false, error: msg });
 }
 function jsonOk(res, data) {
-  return res.status(200).json({ ok: true, data });
+  return res.status(200).json({ ok:true, data });
 }
 
+// convert marker to FieldValue.serverTimestamp()
 function replaceServerTimestamps(obj) {
+  ensureFirebase();
   const FieldValue = admin.firestore.FieldValue;
   if (obj && typeof obj === "object" && !Array.isArray(obj)) {
     if (Object.keys(obj).length === 1 && obj._serverTimestamp === true) {
@@ -45,8 +45,7 @@ function replaceServerTimestamps(obj) {
     const out = Array.isArray(obj) ? [] : {};
     for (const k of Object.keys(obj)) {
       const v = obj[k];
-      if (v && typeof v === "object") out[k] = replaceServerTimestamps(v);
-      else out[k] = v;
+      out[k] = (v && typeof v === "object") ? replaceServerTimestamps(v) : v;
     }
     return out;
   } else if (Array.isArray(obj)) {
@@ -55,7 +54,8 @@ function replaceServerTimestamps(obj) {
   return obj;
 }
 
-function applyFirestoreWhere(q, whereArr = []) {
+// apply where array to firestore query
+function applyFirestoreWhere(q, whereArr) {
   if (!Array.isArray(whereArr)) return q;
   for (const w of whereArr) {
     if (!w || !w.field || !w.op) continue;
@@ -64,94 +64,97 @@ function applyFirestoreWhere(q, whereArr = []) {
   return q;
 }
 
+// verify firebase id token from Authorization header
+async function verifyFirebaseToken(req) {
+  const auth = req.headers.authorization || req.headers.Authorization;
+  if (!auth || !auth.startsWith("Bearer ")) throw new Error("Missing Authorization Bearer token");
+  const token = auth.split(" ")[1];
+  ensureFirebase();
+  try {
+    const decoded = await admin.auth().verifyIdToken(token);
+    return decoded; // { uid, ... }
+  } catch (err) {
+    throw new Error("Invalid Firebase ID token");
+  }
+}
+
 module.exports = async (req, res) => {
   try {
-    const secretHeader = req.headers["x-api-secret"];
-    if (!process.env.API_SECRET) {
-      console.error("API_SECRET not set on server");
-      return jsonError(res, 500, "Server misconfigured");
-    }
-    if (!secretHeader || secretHeader !== process.env.API_SECRET) {
-      return jsonError(res, 401, "Unauthorized");
-    }
-
+    // payload
     const payload = req.method === "GET" ? req.query : req.body;
-    if (!payload || !payload.database || !payload.action) {
-      return jsonError(res, 400, "Missing required fields: database and action");
+    if (!payload || !payload.database || !payload.action) return jsonError(res, 400, "Missing database/action");
+
+    // AUTH: accept only Firebase ID token
+    let user;
+    try {
+      user = await verifyFirebaseToken(req);
+    } catch (err) {
+      return jsonError(res, 401, err.message || "Unauthorized");
     }
 
+    // FIRESTORE ops
     if (payload.database === "firestore") {
-      const db = initFirebase();
+      ensureFirebase();
+      const db = admin.firestore();
       const action = payload.action;
 
-      switch (action) {
+      switch(action) {
         case "getDoc": {
-          if (!payload.collection || !payload.docId) return jsonError(res, 400, "collection/docId required");
+          if (!payload.collection || !payload.docId) return jsonError(res,400,"collection/docId required");
           const doc = await db.collection(payload.collection).doc(payload.docId).get();
           if (!doc.exists) return jsonOk(res, null);
           return jsonOk(res, { id: doc.id, ...doc.data() });
         }
-
         case "getCollection": {
-          if (!payload.collection) return jsonError(res, 400, "collection required");
+          if (!payload.collection) return jsonError(res,400,"collection required");
           let q = db.collection(payload.collection);
           if (payload.query) {
             if (payload.query.where) q = applyFirestoreWhere(q, payload.query.where);
-            if (payload.query.orderBy) {
-              const ob = payload.query.orderBy; 
-              q = q.orderBy(ob.field, ob.direction || "asc");
-            }
-            if (payload.query.limit) q = q.limit(parseInt(payload.query.limit, 10));
-            if (payload.query.offset) q = q.offset(parseInt(payload.query.offset, 10));
+            if (payload.query.orderBy) { const ob = payload.query.orderBy; q = q.orderBy(ob.field, ob.direction || "asc"); }
+            if (payload.query.limit) q = q.limit(parseInt(payload.query.limit,10));
+            if (payload.query.offset) q = q.offset(parseInt(payload.query.offset,10));
           }
           const snap = await q.get();
           const items = [];
-          snap.forEach(d => items.push({ id: d.id, ...d.data() }));
+          snap.forEach(d => items.push({ id:d.id, ...d.data() }));
           return jsonOk(res, items);
         }
-
         case "setDoc": {
-          if (!payload.collection || !payload.docId || typeof payload.data === "undefined")
-            return jsonError(res, 400, "collection/docId/data required");
+          if (!payload.collection || !payload.docId || typeof payload.data === "undefined") return jsonError(res,400,"collection/docId/data required");
           const data = replaceServerTimestamps(payload.data);
-          await db.collection(payload.collection).doc(payload.docId).set(data, { merge: false });
-          return jsonOk(res, { success: true });
+          await db.collection(payload.collection).doc(payload.docId).set(data, { merge:false });
+          return jsonOk(res, { success:true });
         }
-
         case "updateDoc": {
-          if (!payload.collection || !payload.docId || typeof payload.data === "undefined")
-            return jsonError(res, 400, "collection/docId/data required");
+          if (!payload.collection || !payload.docId || typeof payload.data === "undefined") return jsonError(res,400,"collection/docId/data required");
           const data = replaceServerTimestamps(payload.data);
           await db.collection(payload.collection).doc(payload.docId).update(data);
-          return jsonOk(res, { success: true });
+          return jsonOk(res, { success:true });
         }
-
         case "addDoc": {
-          if (!payload.collection || typeof payload.data === "undefined")
-            return jsonError(res, 400, "collection/data required");
+          if (!payload.collection || typeof payload.data === "undefined") return jsonError(res,400,"collection/data required");
           const data = replaceServerTimestamps(payload.data);
           const ref = await db.collection(payload.collection).add(data);
           return jsonOk(res, { id: ref.id });
         }
-
         case "deleteDoc": {
-          if (!payload.collection || !payload.docId) return jsonError(res, 400, "collection/docId required");
+          if (!payload.collection || !payload.docId) return jsonError(res,400,"collection/docId required");
           await db.collection(payload.collection).doc(payload.docId).delete();
-          return jsonOk(res, { success: true });
+          return jsonOk(res, { success:true });
         }
-
         default:
-          return jsonError(res, 400, "Unsupported action for firestore");
+          return jsonError(res,400,"Unsupported firestore action");
       }
     }
 
+    // SUPABASE ops (still require server env keys)
     if (payload.database === "supabase") {
       const sb = initSupabase();
       const action = payload.action;
 
-      switch (action) {
+      switch(action) {
         case "supabase_select": {
-          if (!payload.table) return jsonError(res, 400, "table required");
+          if (!payload.table) return jsonError(res,400,"table required");
           let q = sb.from(payload.table).select(payload.columns || "*");
           if (payload.query && Array.isArray(payload.query.where)) {
             for (const w of payload.query.where) {
@@ -172,42 +175,37 @@ module.exports = async (req, res) => {
           if (error) throw error;
           return jsonOk(res, data);
         }
-
         case "supabase_insert": {
-          if (!payload.table || typeof payload.values === "undefined") return jsonError(res, 400, "table/values required");
+          if (!payload.table || typeof payload.values === "undefined") return jsonError(res,400,"table/values required");
           const { data, error } = await sb.from(payload.table).insert(payload.values).select();
           if (error) throw error;
           return jsonOk(res, data);
         }
-
         case "supabase_update": {
-          if (!payload.table || typeof payload.values === "undefined" || !payload.query || !Array.isArray(payload.query.where))
-            return jsonError(res, 400, "table/values/query.where required");
+          if (!payload.table || typeof payload.values === "undefined" || !payload.query || !Array.isArray(payload.query.where)) return jsonError(res,400,"table/values/query.where required");
           let q = sb.from(payload.table);
           for (const w of payload.query.where) q = q.eq(w.col, w.val);
           const { data, error } = await q.update(payload.values).select();
           if (error) throw error;
           return jsonOk(res, data);
         }
-
         case "supabase_delete": {
-          if (!payload.table || !payload.query || !Array.isArray(payload.query.where))
-            return jsonError(res, 400, "table/query.where required");
+          if (!payload.table || !payload.query || !Array.isArray(payload.query.where)) return jsonError(res,400,"table/query.where required");
           let q = sb.from(payload.table);
           for (const w of payload.query.where) q = q.eq(w.col, w.val);
           const { data, error } = await q.delete().select();
           if (error) throw error;
           return jsonOk(res, data);
         }
-
         default:
-          return jsonError(res, 400, "Unsupported action for supabase");
+          return jsonError(res,400,"Unsupported supabase action");
       }
     }
 
-    return jsonError(res, 400, "Unknown database, use 'firestore' or 'supabase'");
+    return jsonError(res,400,"Unknown database: use 'firestore' or 'supabase'");
+
   } catch (err) {
-    console.error("universal API error:", err);
-    return res.status(500).json({ ok: false, error: err.message || String(err) });
+    console.error("universal error:", err);
+    return res.status(500).json({ ok:false, error: err.message || String(err) });
   }
 };
