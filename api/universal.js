@@ -25,9 +25,16 @@ function initSupabase() {
 }
 
 function jsonError(res, status=400, msg="Bad request") {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   return res.status(status).json({ ok:false, error: msg });
 }
+
 function jsonOk(res, data) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   return res.status(200).json({ ok:true, data });
 }
 
@@ -66,29 +73,35 @@ async function verifyFirebaseToken(req) {
   ensureFirebase();
   try {
     const decoded = await admin.auth().verifyIdToken(token);
-    return decoded; 
+    return decoded;
   } catch (err) {
     throw new Error("Invalid Firebase ID token");
   }
 }
 
 module.exports = async (req, res) => {
+  // Handle preflight
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.status(200).end();
+    return;
+  }
+
   try {
     const payload = req.method === "GET" ? req.query : req.body;
     if (!payload || !payload.database || !payload.action) return jsonError(res, 400, "Missing database/action");
-
     let user;
     try {
       user = await verifyFirebaseToken(req);
     } catch (err) {
       return jsonError(res, 401, err.message || "Unauthorized");
     }
-
     if (payload.database === "firestore") {
       ensureFirebase();
       const db = admin.firestore();
       const action = payload.action;
-
       switch(action) {
         case "getDoc": {
           if (!payload.collection || !payload.docId) return jsonError(res,400,"collection/docId required");
@@ -137,11 +150,9 @@ module.exports = async (req, res) => {
           return jsonError(res,400,"Unsupported firestore action");
       }
     }
-
     if (payload.database === "supabase") {
       const sb = initSupabase();
       const action = payload.action;
-
       switch(action) {
         case "supabase_select": {
           if (!payload.table) return jsonError(res,400,"table required");
@@ -191,9 +202,7 @@ module.exports = async (req, res) => {
           return jsonError(res,400,"Unsupported supabase action");
       }
     }
-
     return jsonError(res,400,"Unknown database: use 'firestore' or 'supabase'");
-
   } catch (err) {
     console.error("universal error:", err);
     return res.status(500).json({ ok:false, error: err.message || String(err) });
