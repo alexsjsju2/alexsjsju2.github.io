@@ -24,18 +24,22 @@ function initSupabase() {
   return supabase;
 }
 
-function jsonError(res, status=400, msg="Bad request") {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+function setCORSHeaders(res) {
+  res.setHeader('Access-Control-Allow-Origin', 'https://www.alexsjsju.eu');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  return res.status(status).json({ ok:false, error: msg });
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Max-Age', '86400');
+}
+
+function jsonError(res, status=400, msg="Bad request") {
+  setCORSHeaders(res);
+  return res.status(status).json({ ok: false, error: msg });
 }
 
 function jsonOk(res, data) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  return res.status(200).json({ ok:true, data });
+  setCORSHeaders(res);
+  return res.status(200).json({ ok: true, data });
 }
 
 function replaceServerTimestamps(obj) {
@@ -80,10 +84,9 @@ async function verifyFirebaseToken(req) {
 }
 
 module.exports = async (req, res) => {
+  // Handle preflight
   if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    setCORSHeaders(res);
     res.status(200).end();
     return;
   }
@@ -206,9 +209,7 @@ module.exports = async (req, res) => {
     return jsonError(res,400,"Unknown database: use 'firestore' or 'supabase'");
   } catch (err) {
     console.error("universal error:", err);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    return res.status(500).json({ ok:false, error: err.message || String(err) });
+    setCORSHeaders(res);
+    return res.status(500).json({ ok: false, error: err.message || String(err) });
   }
 };
