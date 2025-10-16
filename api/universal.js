@@ -1,6 +1,5 @@
 const admin = require("firebase-admin");
 const { createClient } = require("@supabase/supabase-js");
-
 let firebaseInitialized = false;
 function ensureFirebase() {
   if (firebaseInitialized) return;
@@ -13,7 +12,6 @@ function ensureFirebase() {
   }
   firebaseInitialized = true;
 }
-
 let supabase = null;
 function initSupabase() {
   if (supabase) return supabase;
@@ -23,7 +21,6 @@ function initSupabase() {
   supabase = createClient(url, key, { auth: { persistSession: false } });
   return supabase;
 }
-
 function setCORSHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', 'https://www.alexsjsju.eu');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -31,17 +28,14 @@ function setCORSHeaders(res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Max-Age', '86400');
 }
-
 function jsonError(res, status=400, msg="Bad request") {
   setCORSHeaders(res);
   return res.status(status).json({ ok: false, error: msg });
 }
-
 function jsonOk(res, data) {
   setCORSHeaders(res);
   return res.status(200).json({ ok: true, data });
 }
-
 function replaceServerTimestamps(obj) {
   ensureFirebase();
   const FieldValue = admin.firestore.FieldValue;
@@ -60,7 +54,6 @@ function replaceServerTimestamps(obj) {
   }
   return obj;
 }
-
 function applyFirestoreWhere(q, whereArr) {
   if (!Array.isArray(whereArr)) return q;
   for (const w of whereArr) {
@@ -69,7 +62,6 @@ function applyFirestoreWhere(q, whereArr) {
   }
   return q;
 }
-
 async function verifyFirebaseToken(req) {
   const auth = req.headers.authorization || req.headers.Authorization;
   if (!auth || !auth.startsWith("Bearer ")) throw new Error("Missing Authorization Bearer token");
@@ -82,15 +74,12 @@ async function verifyFirebaseToken(req) {
     throw new Error("Invalid Firebase ID token");
   }
 }
-
 module.exports = async (req, res) => {
-  // Handle preflight
   if (req.method === 'OPTIONS') {
     setCORSHeaders(res);
     res.status(200).end();
     return;
   }
-
   try {
     const payload = req.method === "GET" ? req.query : req.body;
     if (!payload || !payload.database || !payload.action) return jsonError(res, 400, "Missing database/action");
@@ -201,6 +190,20 @@ module.exports = async (req, res) => {
           const { data, error } = await q.delete().select();
           if (error) throw error;
           return jsonOk(res, data);
+        }
+        case "storage_upload": {
+          if (!payload.bucket || !payload.path || !payload.fileBase64 || !payload.contentType) return jsonError(res, 400, "bucket/path/fileBase64/contentType required");
+          const buffer = Buffer.from(payload.fileBase64, 'base64');
+          const { data, error } = await sb.storage.from(payload.bucket).upload(payload.path, buffer, { contentType: payload.contentType });
+          if (error) throw error;
+          const { data: publicData } = sb.storage.from(payload.bucket).getPublicUrl(payload.path);
+          return jsonOk(res, { publicUrl: publicData.publicUrl });
+        }
+        case "storage_delete": {
+          if (!payload.bucket || !payload.path) return jsonError(res, 400, "bucket/path required");
+          const { data, error } = await sb.storage.from(payload.bucket).remove([payload.path]);
+          if (error) throw error;
+          return jsonOk(res, { success: true });
         }
         default:
           return jsonError(res,400,"Unsupported supabase action");
