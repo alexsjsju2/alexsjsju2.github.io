@@ -80,7 +80,6 @@ async function verifyFirebaseToken(req) {
 }
 
 module.exports = async (req, res) => {
-  // Handle preflight
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -92,11 +91,13 @@ module.exports = async (req, res) => {
   try {
     const payload = req.method === "GET" ? req.query : req.body;
     if (!payload || !payload.database || !payload.action) return jsonError(res, 400, "Missing database/action");
-    let user;
-    try {
-      user = await verifyFirebaseToken(req);
-    } catch (err) {
-      return jsonError(res, 401, err.message || "Unauthorized");
+    let user = null;
+    if (!payload.public) {
+      try {
+        user = await verifyFirebaseToken(req);
+      } catch (err) {
+        return jsonError(res, 401, err.message || "Unauthorized");
+      }
     }
     if (payload.database === "firestore") {
       ensureFirebase();
@@ -205,6 +206,9 @@ module.exports = async (req, res) => {
     return jsonError(res,400,"Unknown database: use 'firestore' or 'supabase'");
   } catch (err) {
     console.error("universal error:", err);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     return res.status(500).json({ ok:false, error: err.message || String(err) });
   }
 };
