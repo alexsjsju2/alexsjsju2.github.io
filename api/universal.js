@@ -1,5 +1,6 @@
 const admin = require("firebase-admin");
 const { createClient } = require("@supabase/supabase-js");
+
 let firebaseInitialized = false;
 function ensureFirebase() {
   if (firebaseInitialized) return;
@@ -12,6 +13,7 @@ function ensureFirebase() {
   }
   firebaseInitialized = true;
 }
+
 let supabase = null;
 function initSupabase() {
   if (supabase) return supabase;
@@ -21,6 +23,7 @@ function initSupabase() {
   supabase = createClient(url, key, { auth: { persistSession: false } });
   return supabase;
 }
+
 function setCORSHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', 'https://www.alexsjsju.eu');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -28,14 +31,17 @@ function setCORSHeaders(res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Max-Age', '86400');
 }
+
 function jsonError(res, status=400, msg="Bad request") {
   setCORSHeaders(res);
   return res.status(status).json({ ok: false, error: msg });
 }
+
 function jsonOk(res, data) {
   setCORSHeaders(res);
   return res.status(200).json({ ok: true, data });
 }
+
 function replaceServerTimestamps(obj) {
   ensureFirebase();
   const FieldValue = admin.firestore.FieldValue;
@@ -54,6 +60,7 @@ function replaceServerTimestamps(obj) {
   }
   return obj;
 }
+
 function applyFirestoreWhere(q, whereArr) {
   if (!Array.isArray(whereArr)) return q;
   for (const w of whereArr) {
@@ -62,6 +69,7 @@ function applyFirestoreWhere(q, whereArr) {
   }
   return q;
 }
+
 async function verifyFirebaseToken(req) {
   const auth = req.headers.authorization || req.headers.Authorization;
   if (!auth || !auth.startsWith("Bearer ")) throw new Error("Missing Authorization Bearer token");
@@ -74,12 +82,29 @@ async function verifyFirebaseToken(req) {
     throw new Error("Invalid Firebase ID token");
   }
 }
+
+function getCollectionRef(collectionPath, db) {
+  const parts = collectionPath.split('/').filter(p => p);
+  if (parts.length % 2 === 0) throw new Error("Invalid collectionPath: must point to a collection (odd number of parts)");
+  let ref = db;
+  for (let i = 0; i < parts.length - 1; i += 2) {
+    ref = ref.collection(parts[i]).doc(parts[i + 1]);
+  }
+  return ref.collection(parts[parts.length - 1]);
+}
+
+async function getDocRef(collectionPath, docId, db) {
+  const collRef = getCollectionRef(collectionPath, db);
+  return collRef.doc(docId);
+}
+
 module.exports = async (req, res) => {
   if (req.method === 'OPTIONS') {
     setCORSHeaders(res);
     res.status(200).end();
     return;
   }
+
   try {
     const payload = req.method === "GET" ? req.query : req.body;
     if (!payload || !payload.database || !payload.action) return jsonError(res, 400, "Missing database/action");
@@ -95,16 +120,18 @@ module.exports = async (req, res) => {
       ensureFirebase();
       const db = admin.firestore();
       const action = payload.action;
+      let collectionPath = payload.collectionPath || payload.collection;
       switch(action) {
         case "getDoc": {
-          if (!payload.collection || !payload.docId) return jsonError(res,400,"collection/docId required");
-          const doc = await db.collection(payload.collection).doc(payload.docId).get();
+          if (!collectionPath || !payload.docId) return jsonError(res,400,"collectionPath/docId required");
+          const docRef = await getDocRef(collectionPath, payload.docId, db);
+          const doc = await docRef.get();
           if (!doc.exists) return jsonOk(res, null);
           return jsonOk(res, { id: doc.id, ...doc.data() });
         }
         case "getCollection": {
-          if (!payload.collection) return jsonError(res,400,"collection required");
-          let q = db.collection(payload.collection);
+          if (!collectionPath) return jsonError(res,400,"collectionPath required");
+          let q = getCollectionRef(collectionPath, db);
           if (payload.query) {
             if (payload.query.where) q = applyFirestoreWhere(q, payload.query.where);
             if (payload.query.orderBy) { const ob = payload.query.orderBy; q = q.orderBy(ob.field, ob.direction || "asc"); }
@@ -117,26 +144,30 @@ module.exports = async (req, res) => {
           return jsonOk(res, items);
         }
         case "setDoc": {
-          if (!payload.collection || !payload.docId || typeof payload.data === "undefined") return jsonError(res,400,"collection/docId/data required");
+          if (!collectionPath || !payload.docId || typeof payload.data === "undefined") return jsonError(res,400,"collectionPath/docId/data required");
           const data = replaceServerTimestamps(payload.data);
-          await db.collection(payload.collection).doc(payload.docId).set(data, { merge:false });
+          const docRef = await getDocRef(collectionPath, payload.docId, db);
+          await docRef.set(data, { merge: payload.merge || false });
           return jsonOk(res, { success:true });
         }
         case "updateDoc": {
-          if (!payload.collection || !payload.docId || typeof payload.data === "undefined") return jsonError(res,400,"collection/docId/data required");
+          if (!collectionPath || !payload.docId || typeof payload.data === "undefined") return jsonError(res,400,"collectionPath/docId/data required");
           const data = replaceServerTimestamps(payload.data);
-          await db.collection(payload.collection).doc(payload.docId).update(data);
+          const docRef = await getDocRef(collectionPath, payload.docId, db);
+          await docRef.update(data);
           return jsonOk(res, { success:true });
         }
         case "addDoc": {
-          if (!payload.collection || typeof payload.data === "undefined") return jsonError(res,400,"collection/data required");
+          if (!collectionPath || typeof payload.data === "undefined") return jsonError(res,400,"collectionPath/data required");
           const data = replaceServerTimestamps(payload.data);
-          const ref = await db.collection(payload.collection).add(data);
+          const collRef = getCollectionRef(collectionPath, db);
+          const ref = await collRef.add(data);
           return jsonOk(res, { id: ref.id });
         }
         case "deleteDoc": {
-          if (!payload.collection || !payload.docId) return jsonError(res,400,"collection/docId required");
-          await db.collection(payload.collection).doc(payload.docId).delete();
+          if (!collectionPath || !payload.docId) return jsonError(res,400,"collectionPath/docId required");
+          const docRef = await getDocRef(collectionPath, payload.docId, db);
+          await docRef.delete();
           return jsonOk(res, { success:true });
         }
         default:
@@ -190,20 +221,6 @@ module.exports = async (req, res) => {
           const { data, error } = await q.delete().select();
           if (error) throw error;
           return jsonOk(res, data);
-        }
-        case "storage_upload": {
-          if (!payload.bucket || !payload.path || !payload.fileBase64 || !payload.contentType) return jsonError(res, 400, "bucket/path/fileBase64/contentType required");
-          const buffer = Buffer.from(payload.fileBase64, 'base64');
-          const { data, error } = await sb.storage.from(payload.bucket).upload(payload.path, buffer, { contentType: payload.contentType });
-          if (error) throw error;
-          const { data: publicData } = sb.storage.from(payload.bucket).getPublicUrl(payload.path);
-          return jsonOk(res, { publicUrl: publicData.publicUrl });
-        }
-        case "storage_delete": {
-          if (!payload.bucket || !payload.path) return jsonError(res, 400, "bucket/path required");
-          const { data, error } = await sb.storage.from(payload.bucket).remove([payload.path]);
-          if (error) throw error;
-          return jsonOk(res, { success: true });
         }
         default:
           return jsonError(res,400,"Unsupported supabase action");
