@@ -1,4 +1,3 @@
-const fetch = require('node-fetch');
 const cheerio = require('cheerio');
 const urlModule = require('url');
 
@@ -27,8 +26,9 @@ module.exports = async (req, res) => {
     res.removeHeader('Content-Security-Policy');
     res.set('Content-Security-Policy', "frame-ancestors *"); // Opzionale, per permettere framing
 
+    let body;
     if (contentType.includes('text/html')) {
-      let body = await response.text();
+      body = await response.text();
 
       // Rewrite URLs usando cheerio
       const $ = cheerio.load(body);
@@ -59,7 +59,7 @@ module.exports = async (req, res) => {
       $('style, [style]').each(function () {
         let style = $(this).attr('style') || $(this).html();
         if (style) {
-          style = style.replace(/url\((['"]?)([^'")]+)\1\)/g, (match, quote, u) => {
+          style = style.replace(/url$$ (['"]?)([^'")]+)\1 $$/g, (match, quote, u) => {
             const absU = makeAbsolute(u, baseUrl);
             return `url(${quote}${proxyBase + encodeURIComponent(absU)}${quote})`;
           });
@@ -85,7 +85,8 @@ module.exports = async (req, res) => {
 
       body = $.html();
     } else {
-      body = await response.buffer();
+      const arrayBuffer = await response.arrayBuffer();
+      body = Buffer.from(arrayBuffer);
     }
 
     res.send(body);
