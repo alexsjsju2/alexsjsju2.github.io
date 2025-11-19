@@ -4,6 +4,8 @@
   "dependencies": {
     "firebase-admin": "^12.5.0",
     "@supabase/supabase-js": "^2.45.4"
+    "cheerio": "^1.0.0-rc.12",
+    "node-fetch": "^3.3.2"
   },
   "engines": {
     "node": ">=18.0.0"
