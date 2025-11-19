@@ -21,21 +21,18 @@ module.exports = async (req, res) => {
     const contentType = response.headers.get('content-type') || 'text/html';
     res.set('Content-Type', contentType);
 
-    // Rimuovi header restrittive
     res.removeHeader('X-Frame-Options');
     res.removeHeader('Content-Security-Policy');
-    res.set('Content-Security-Policy', "frame-ancestors *"); // Opzionale, per permettere framing
+    res.set('Content-Security-Policy', "frame-ancestors *"); 
 
     let body;
     if (contentType.includes('text/html')) {
       body = await response.text();
 
-      // Rewrite URLs usando cheerio
       const $ = cheerio.load(body);
       const proxyBase = `${req.protocol}://${req.headers.host}/api/proxy?url=`;
       const baseUrl = new URL(targetUrl);
 
-      // Rewrite attributes
       const rewriteAttrs = ['href', 'src', 'action', 'poster', 'background', 'data-src', 'srcset'];
       rewriteAttrs.forEach(attr => {
         $(`[${attr}]`).each(function () {
@@ -55,7 +52,6 @@ module.exports = async (req, res) => {
         });
       });
 
-      // Rewrite inline styles with url()
       $('style, [style]').each(function () {
         let style = $(this).attr('style') || $(this).html();
         if (style) {
@@ -71,7 +67,6 @@ module.exports = async (req, res) => {
         }
       });
 
-      // Simple JS rewrite for location.href etc.
       $('script').each(function () {
         let script = $(this).html();
         if (script) {
