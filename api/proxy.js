@@ -9,11 +9,11 @@ module.exports = async (req, res) => {
 
   try {
     const response = await fetch(targetUrl, {
-      method: 'GET', 
+      method: 'GET',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Language': 'en-US,en;q=0.9,it;q=0.8',
         'Accept-Encoding': 'gzip, deflate, br, zstd',
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1',
@@ -21,16 +21,18 @@ module.exports = async (req, res) => {
         'Sec-Fetch-Mode': 'navigate',
         'Sec-Fetch-Site': 'none',
         'Sec-Fetch-User': '?1',
-        'Referer': 'https://www.google.com/'
+        'Sec-Ch-Ua': '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        'Referer': 'https://www.duckduckgo.com/'
       }
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.log(`Fetch error: ${response.status} for ${targetUrl} - ${errorText}`); 
+      console.log(`Fetch error: ${response.status} for ${targetUrl} - ${errorText}`);
       return res.status(response.status).send(errorText);
     }
-
     const contentType = response.headers.get('content-type') || 'text/html';
     res.setHeader('Content-Type', contentType);
 
@@ -100,8 +102,6 @@ module.exports = async (req, res) => {
       const arrayBuffer = await response.arrayBuffer();
       body = Buffer.from(arrayBuffer);
     }
-
-    res.send(body);
   } catch (error) {
     console.log(`Proxy error for ${targetUrl}: ${error.message}`);
     res.status(500).send(`Proxy error: ${error.message}`);
