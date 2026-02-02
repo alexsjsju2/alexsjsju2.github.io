@@ -12,17 +12,14 @@ if (!getApps().length) {
 const db = getFirestore();
 
 export default async function handler(req, res) {
-  const docRef = db.collection('links').doc('main'); 
+  const docRef = db.collection('links').doc('main');
 
   try {
     if (req.method === 'GET') {
       const doc = await docRef.get();
-      if (!doc.exists) {
-        return res.status(200).json({ value: '' });
-      }
-      return res.status(200).json({ value: doc.data().url });
-    } 
-    
+      return res.status(200).json({ value: doc.exists ? doc.data().url : '' });
+    }
+
     if (req.method === 'POST') {
       const { value } = req.body;
       if (!value || typeof value !== 'string') {
@@ -34,7 +31,6 @@ export default async function handler(req, res) {
     }
 
     return res.status(405).json({ error: 'Metodo non consentito' });
-
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: err.message });
