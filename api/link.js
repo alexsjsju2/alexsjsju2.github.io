@@ -14,6 +14,16 @@ try {
 }
 
 export default async function handler(req, res) {
+  // CORS headers
+  res.setHeader('Access-Control-Allow-Origin', 'https://www.alexsjsju.eu');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Gestione preflight OPTIONS
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   if (!db) {
     return res.status(500).json({ error: 'Errore di configurazione del server' });
   }
@@ -45,7 +55,7 @@ export default async function handler(req, res) {
       res.status(500).json({ error: 'Errore nel salvataggio del link' });
     }
   } else {
-    res.setHeader('Allow', ['GET', 'POST']);
+    res.setHeader('Allow', ['GET', 'POST', 'OPTIONS']);
     res.status(405).end(`Metodo ${req.method} non consentito`);
   }
 }
