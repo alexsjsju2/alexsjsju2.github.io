@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AleXNoteProjectAI</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/simplemde/latest/simplemde.min.css">
+    <style>
+        body {background-color: #121212;color: #ffffff;font-family: Arial, sans-serif;display: flex;flex-direction: column;align-items: center;justify-content: flex-start;min-height: 100vh;margin: 0;padding: 20px;}
+        a {color: #bb86fc;text-decoration: none;}
+        a:hover {text-decoration: underline;}
+        input[type="text"] {background-color: #1e1e1e;color: #ffffff;border: 1px solid #333;padding: 10px;margin: 10px 0;width: 300px;border-radius: 4px;}
+        textarea {background-color: #1e1e1e;color: #ffffff;border: 1px solid #333;padding: 10px;margin: 10px 0;width: 300px;height: 100px;border-radius: 4px;}
+        button {background-color: #6200ea;color: #ffffff;border: none;padding: 10px 20px;margin: 5px;cursor: pointer;border-radius: 4px;transition: background-color 0.3s;}
+        button:hover {background-color: #3700b3;}
+        #display {margin-bottom: 20px;font-size: 18px;width: 300px;}
+        #editInput, #titleInput, #saveBtn {display: none;}
+        ul {list-style: none;padding: 0;width: 300px;}
+        li {background-color: #1e1e1e;padding: 10px;margin: 5px 0;border-radius: 4px;cursor: pointer;}
+        li:hover {background-color: #333;}
+        .note-title {font-weight: bold;display: block;}
+        .note-preview {display: block;}
+        #folderPanel {display: none;position: absolute;background-color: #1e1e1e;border: 1px solid #333;padding: 10px;border-radius: 4px;z-index: 10;}
+        #folderContent ul {margin: 0;padding: 0;}
+        #folderContent li {margin: 5px 0;}
+        #folderContent p {margin: 0;}
+        #status {color: #ff9800; font-size: 0.9em; margin: 10px 0;}
+    </style>
+</head>
+<body>
+    <div id="notesContainer">
+        <button id="newBtn">Nuova Nota</button>
+        <button id="newFolderBtn">Crea Cartella</button>
+        <h2>Cartelle</h2>
+        <ul id="foldersList"></ul>
+        <h2 id="currentFolderTitle">Note non in cartelle</h2>
+        <button id="backBtn" style="display: none;">Torna indietro</button>
+        <ul id="notesList"></ul>
+    </div>
+    <div id="display">
+        <h3 id="title"></h3>
+        <div id="note"></div>
+        <p>Created: <span id="created"></span> | Modified: <span id="modified"></span></p>
+    </div>
+    <input id="titleInput" type="text" placeholder="Titolo della nota">
+    <textarea id="editInput"></textarea>
+    <button id="editBtn">Modifica</button>
+    <button id="copyBtn">Copia Link</button>
+    <button id="deleteBtn">Elimina</button>
+    <button id="saveBtn">Salva</button>
+
+    <div id="folderPanel">
+        <div id="folderContent"></div>
+    </div>
+
+    <div id="status">Caricamento struttura...</div>
+
+    <script src="https://cdn.jsdelivr.net/simplemde/latest/simplemde.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script>
+        const apiUrl = 'https://apisecurity-iota.vercel.app/api/linkai.js';
+        const CONFIG_ID = 'project-ai-alex'; 
+
+        let selectedId = null;
+        let data = { folders: [], uncategorized: [] }; 
+        let currentView = 'uncategorized';
+        let isSaving = false;
+        let currentMarkdown = '';
+        let simplemde = null;
+
+        const status = document.getElementById('status');
+
+        function setStatus(msg, isError = false) {
+            status.textContent = msg;
+            status.style.color = isError ? '#f44336' : '#4caf50';
+        }
+
+        async function loadConfig() {
+            try {
+                setStatus('Caricamento note condivise...');
+                const res = await fetch(`${apiUrl}?id=${CONFIG_ID}`);
+                if (!res.ok) {
+                    if (res.status === 404) {
+                        await saveConfig();
+                        return loadConfig();
+                    }
+                    throw new Error('Errore caricamento');
+                }
+                const serverData = await res.json();
+                data = JSON.parse(serverData.content || '{}') || { folders: [], uncategorized: [] };
+                setStatus('Note caricate correttamente');
+            } catch (err) {
+                console.error(err);
+                setStatus('Errore nel caricamento della struttura condivisa', true);
+            }
+        }
+
+        async function saveConfig() {
+            if (isSaving) return;
+            isSaving = true;
+            try {
+                setStatus('Salvataggio struttura...');
+                const response = await fetch(`${apiUrl}?id=${CONFIG_ID}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: JSON.stringify(data) })
+                });
+                if (!response.ok) throw new Error('Errore salvataggio config');
+                setStatus('Struttura salvata');
+            } catch (err) {
+                console.error(err);
+                setStatus('Errore salvataggio struttura condivisa', true);
+            } finally {
+                isSaving = false;
+            }
+        }
+
+        function isInLocal(id) {
+            return data.uncategorized.includes(id) || data.folders.some(f => f.notes.includes(id));
+        }
+
+        function removeFromLocal(id) {
+            data.uncategorized = data.uncategorized.filter(i => i !== id);
+            data.folders.forEach(f => f.notes = f.notes.filter(i => i !== id));
+            saveConfig();
+        }
+
+        async function loadNote(id) {
+            try {
+                const response = await fetch(`${apiUrl}?id=${id}`);
+                if (!response.ok) throw new Error('Errore caricamento nota');
+                const res = await response.json();
+                let noteData;
+                try {
+                    noteData = JSON.parse(res.content);
+                } catch {
+                    noteData = {
+                        title: 'Untitled',
+                        content: res.content || 'Nessuna nota',
+                        created: new Date().toISOString(),
+                        modified: new Date().toISOString()
+                    };
+                }
+                document.getElementById('title').textContent = noteData.title || 'Untitled';
+                currentMarkdown = noteData.content || '';
+                document.getElementById('note').innerHTML = marked.parse(currentMarkdown);
+                document.getElementById('created').textContent = new Date(noteData.created).toLocaleString();
+                document.getElementById('modified').textContent = new Date(noteData.modified).toLocaleString();
+                selectedId = id;
+            } catch (error) {
+                console.error(error);
+                document.getElementById('title').textContent = '';
+                document.getElementById('note').innerHTML = 'Errore nel caricamento';
+                document.getElementById('created').textContent = '';
+                document.getElementById('modified').textContent = '';
+            }
+        }
+
+        async function saveNote() {
+            const title = document.getElementById('titleInput').value.trim() || 'Untitled';
+            const content = simplemde ? simplemde.value().trim() : document.getElementById('editInput').value.trim();
+            if (!content) return;
+            let noteData;
+            let method = 'POST';
+            let url = apiUrl;
+            if (selectedId) {
+                method = 'PUT';
+                url = `${apiUrl}?id=${selectedId}`;
+                const res = await fetch(`${apiUrl}?id=${selectedId}`);
+                const old = await res.json();
+                try {
+                    noteData = JSON.parse(old.content);
+                } catch {
+                    noteData = {
+                        title: 'Untitled',
+                        content: old.content || '',
+                        created: new Date().toISOString(),
+                        modified: new Date().toISOString()
+                    };
+                }
+                noteData.title = title;
+                noteData.content = content;
+                noteData.modified = new Date().toISOString();
+            } else {
+                noteData = {
+                    title: title,
+                    content: content,
+                    created: new Date().toISOString(),
+                    modified: new Date().toISOString()
+                };
+            }
+            const saveContent = JSON.stringify(noteData);
+            try {
+                const response = await fetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: saveContent })
+                });
+                if (!response.ok) throw new Error('Errore salvataggio nota');
+                let newId = selectedId;
+                if (!selectedId) {
+                    const res = await response.json();
+                    newId = res.id;
+                    addToCurrentView(newId);
+                    history.pushState(null, '', `?id=${newId}`);
+                }
+                await loadNote(newId);
+                await loadNotesList();
+            } catch (error) {
+                console.error(error);
+                alert('Errore nel salvataggio della nota');
+            }
+        }
+
+        function addToCurrentView(id) {
+            if (currentView === 'uncategorized') {
+                if (!data.uncategorized.includes(id)) data.uncategorized.push(id);
+            } else {
+                const folder = data.folders.find(f => f.name === currentView);
+                if (folder && !folder.notes.includes(id)) folder.notes.push(id);
+            }
+            saveConfig();
+        }
+
+        async function deleteNote(id) {
+            try {
+                const response = await fetch(`${apiUrl}?id=${id}`, { method: 'DELETE' });
+                if (!response.ok) throw new Error('Errore eliminazione');
+                clearDisplay();
+                removeFromLocal(id);
+                await loadNotesList();
+            } catch (error) {
+                console.error(error);
+                alert('Errore nella eliminazione della nota');
+            }
+        }
+
+        function clearDisplay() {
+            document.getElementById('title').textContent = '';
+            document.getElementById('note').innerHTML = '';
+            document.getElementById('created').textContent = '';
+            document.getElementById('modified').textContent = '';
+            selectedId = null;
+            currentMarkdown = '';
+            history.pushState(null, '', window.location.pathname);
+        }
+
+        function loadFolders() {
+            const ul = document.getElementById('foldersList');
+            ul.innerHTML = '';
+            data.folders.forEach(f => {
+                const li = document.createElement('li');
+                li.textContent = f.name;
+                li.dataset.folderName = f.name;
+                ul.appendChild(li);
+                li.addEventListener('click', () => {
+                    currentView = f.name;
+                    document.getElementById('currentFolderTitle').textContent = `Note in ${f.name}`;
+                    document.getElementById('backBtn').style.display = 'inline-block';
+                    loadNotesList();
+                    clearDisplay();
+                });
+            });
+        }
+
+        async function loadNotesList() {
+            let ids = currentView === 'uncategorized' ? data.uncategorized : (data.folders.find(f => f.name === currentView)?.notes || []);
+            const ul = document.getElementById('notesList');
+            ul.innerHTML = '';
+            const promises = ids.map(async id => {
+                try {
+                    const res = await fetch(`${apiUrl}?id=${id}`);
+                    if (!res.ok) throw new Error();
+                    const serverData = await res.json();
+                    let noteData;
+                    try {
+                        noteData = JSON.parse(serverData.content);
+                    } catch {
+                        noteData = { title: 'Untitled', content: serverData.content || '' };
+                    }
+                    const title = noteData.title || 'Untitled';
+                    const preview = noteData.content.slice(0, 50) + (noteData.content.length > 50 ? '...' : '');
+                    return { id, title, preview };
+                } catch {
+                    removeFromLocal(id);
+                    return null;
+                }
+            });
+            const results = (await Promise.all(promises)).filter(Boolean);
+            results.forEach(r => {
+                const li = document.createElement('li');
+                li.dataset.id = r.id;
+
+                const titleSpan = document.createElement('span');
+                titleSpan.className = 'note-title';
+                titleSpan.textContent = r.title;
+                titleSpan.addEventListener('click', () => loadNote(r.id));
+
+                const br = document.createElement('br');
+
+                const previewSpan = document.createElement('span');
+                previewSpan.className = 'note-preview';
+                previewSpan.textContent = r.preview;
+                previewSpan.addEventListener('click', () => loadNote(r.id));
+
+                li.appendChild(titleSpan);
+                li.appendChild(br);
+                li.appendChild(previewSpan);
+                ul.appendChild(li);
+
+                li.addEventListener('contextmenu', e => {
+                    e.preventDefault();
+                    showFolderPanel(e, r.id);
+                });
+
+                let timer;
+                li.addEventListener('touchstart', e => {
+                    timer = setTimeout(() => showFolderPanel(e, r.id), 500);
+                });
+                li.addEventListener('touchend', () => clearTimeout(timer));
+                li.addEventListener('touchmove', () => clearTimeout(timer));
+            });
+        }
+
+        function showFolderPanel(e, noteId) {
+            const panel = document.getElementById('folderPanel');
+            const content = document.getElementById('folderContent');
+            content.innerHTML = '';
+            let posX = e.pageX, posY = e.pageY;
+            if (e.touches?.[0]) {
+                posX = e.touches[0].pageX;
+                posY = e.touches[0].pageY;
+            }
+
+            if (data.folders.length === 0) {
+                const p = document.createElement('p');
+                p.textContent = 'Crea prima una cartella';
+                content.appendChild(p);
+            } else {
+                const ul = document.createElement('ul');
+                data.folders.forEach(f => {
+                    const li = document.createElement('li');
+                    li.textContent = f.name;
+                    li.addEventListener('click', () => {
+                        moveNoteToFolder(noteId, f.name);
+                        panel.style.display = 'none';
+                    });
+                    ul.appendChild(li);
+                });
+                content.appendChild(ul);
+            }
+
+            panel.style.left = `${posX}px`;
+            panel.style.top = `${posY}px`;
+            panel.style.display = 'block';
+        }
+
+        function moveNoteToFolder(noteId, folderName) {
+            if (currentView === 'uncategorized') {
+                data.uncategorized = data.uncategorized.filter(i => i !== noteId);
+            } else {
+                const folder = data.folders.find(f => f.name === currentView);
+                if (folder) folder.notes = folder.notes.filter(i => i !== noteId);
+            }
+            const target = data.folders.find(f => f.name === folderName);
+            if (target) target.notes.push(noteId);
+            saveConfig();
+            loadNotesList();
+            if (selectedId === noteId) clearDisplay();
+        }
+
+        document.addEventListener('click', e => {
+            const panel = document.getElementById('folderPanel');
+            if (panel.style.display === 'block' && !panel.contains(e.target)) {
+                panel.style.display = 'none';
+            }
+        });
+
+
+        document.getElementById('newBtn').addEventListener('click', () => {
+            clearDisplay();
+            document.getElementById('titleInput').value = '';
+            document.getElementById('editInput').value = '';
+            document.getElementById('titleInput').style.display = 'block';
+            document.getElementById('editInput').style.display = 'block';
+            document.getElementById('saveBtn').style.display = 'inline-block';
+            if (simplemde) simplemde.toTextArea();
+            simplemde = new SimpleMDE({ element: document.getElementById('editInput') });
+        });
+
+        document.getElementById('newFolderBtn').addEventListener('click', () => {
+            const name = prompt('Nome della cartella:')?.trim();
+            if (!name) return;
+            if (data.folders.some(f => f.name === name)) {
+                alert('Nome già esistente');
+                return;
+            }
+            data.folders.push({ name, notes: [] });
+            saveConfig();
+            loadFolders();
+        });
+
+        document.getElementById('backBtn').addEventListener('click', () => {
+            currentView = 'uncategorized';
+            document.getElementById('currentFolderTitle').textContent = 'Note non in cartelle';
+            document.getElementById('backBtn').style.display = 'none';
+            loadNotesList();
+            clearDisplay();
+        });
+
+        document.getElementById('editBtn').addEventListener('click', () => {
+            if (!selectedId) return alert('Nessuna nota selezionata');
+            document.getElementById('titleInput').value = document.getElementById('title').textContent;
+            document.getElementById('editInput').value = currentMarkdown;
+            document.getElementById('titleInput').style.display = 'block';
+            document.getElementById('editInput').style.display = 'block';
+            document.getElementById('saveBtn').style.display = 'inline-block';
+            if (simplemde) simplemde.toTextArea();
+            simplemde = new SimpleMDE({ element: document.getElementById('editInput') });
+        });
+
+        document.getElementById('saveBtn').addEventListener('click', async () => {
+            await saveNote();
+            document.getElementById('titleInput').style.display = 'none';
+            document.getElementById('editInput').style.display = 'none';
+            document.getElementById('saveBtn').style.display = 'none';
+            if (simplemde) {
+                simplemde.toTextArea();
+                simplemde = null;
+            }
+        });
+
+        document.getElementById('copyBtn').addEventListener('click', () => {
+            if (!selectedId) return alert('Nessuna nota selezionata');
+            const url = `${location.origin}${location.pathname}?id=${selectedId}`;
+            navigator.clipboard.writeText(url).then(() => alert('Link copiato!')).catch(console.error);
+        });
+
+        document.getElementById('deleteBtn').addEventListener('click', () => {
+            if (!selectedId) return alert('Nessuna nota selezionata');
+            if (!confirm('Elimina questa nota?')) return;
+            deleteNote(selectedId);
+        });
+
+        window.addEventListener('load', async () => {
+            await loadConfig();
+            loadFolders();
+            await loadNotesList();
+
+            const urlParams = new URLSearchParams(location.search);
+            const id = urlParams.get('id');
+            if (id) {
+                await loadNote(id);
+                if (!isInLocal(id)) {
+                    data.uncategorized.push(id);
+                    await saveConfig();
+                    await loadNotesList();
+                }
+            }
+        });
+    </script>
+</body>
+</html>
