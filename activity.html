@@ -59,10 +59,10 @@
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script>
         const apiUrl = 'https://apisecurity-iota.vercel.app/api/linksp.js';
-        const CONFIG_ID = 'public-notes-shared-2026'; // ID FISSO → tutti vedono le stesse note/cartelle
+        const CONFIG_ID = 'public-notes-shared-2026'; 
 
         let selectedId = null;
-        let data = { folders: [], uncategorized: [] }; // Struttura caricata dal server
+        let data = { folders: [], uncategorized: [] }; 
         let currentView = 'uncategorized';
         let isSaving = false;
         let currentMarkdown = '';
@@ -81,7 +81,6 @@
                 const res = await fetch(`${apiUrl}?id=${CONFIG_ID}`);
                 if (!res.ok) {
                     if (res.status === 404) {
-                        // Prima volta → creiamo la struttura vuota
                         await saveConfig();
                         return loadConfig();
                     }
@@ -377,7 +376,6 @@
             }
         });
 
-        // ---------------- Eventi pulsanti ----------------
 
         document.getElementById('newBtn').addEventListener('click', () => {
             clearDisplay();
@@ -444,7 +442,6 @@
             deleteNote(selectedId);
         });
 
-        // Init
         window.addEventListener('load', async () => {
             await loadConfig();
             loadFolders();
