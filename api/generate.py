@@ -70,7 +70,7 @@ Richiesta utente:
             system_prompt,
             generation_config={
                 "temperature": 0.7,
-                "max_output_tokens": 131.072,
+                "max_output_tokens": 32.768,
                 "response_mime_type": "text/plain"
             }
         )
