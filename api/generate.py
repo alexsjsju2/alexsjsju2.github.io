@@ -16,10 +16,10 @@ if api_key:
 else:
     logging.warning("GEMINI_API_KEY non trovata.")
 
-def get_available_model(preferred_version='1.5-flash'):
+def get_available_model(preferred_version='2.5-pro'):
     fallback_models = [
-        'gemini-1.5-flash',
-        'gemini-1.5-pro-latest',
+        'gemini-2.5-pro',
+        'gemini-2.5-flash',
     ]
     try:
         models = genai.list_models()
@@ -70,7 +70,7 @@ Richiesta utente:
             system_prompt,
             generation_config={
                 "temperature": 0.7,
-                "max_output_tokens": 32.768,
+                "max_output_tokens": 8192,
                 "response_mime_type": "text/plain"
             }
         )
