@@ -70,21 +70,18 @@ def generate():
     system_prompt = f"""
 Sei un AI senior web developer.
 
-Genera UN SOLO FILE index.html completo (HTML+CSS+JS inline).
+Genera un UNICO FILE index.html completo, pronto per essere salvato e aperto nel browser. 
+Tutto deve essere inline: HTML, CSS, JS. Nessun file esterno (tranne font da Google Fonts o immagini esterne se necessario).
 
 REQUISITI:
-- codice lungo e completo
-- design moderno
-- mobile responsive
-- niente spiegazioni
-- output JSON:
-
-{{
- "index": "...",
- "html": "...",
- "css": "...",
- "js": "..."
-}}
+- codice pronto da copiare/incollare
+- design moderno, responsive, mobile-friendly
+- dark/light mode
+- animazioni e sfere/effetti sullo sfondo
+- non restituire JSON, non usare markdown, no backticks, no commenti inutili
+- tutto il CSS deve essere nel <style> interno
+- tutto il JS deve essere in <script> interno
+- il file deve funzionare standalone, apribile con doppio click o GitHub Pages/Vercel
 
 Richiesta utente:
 {user_prompt}
