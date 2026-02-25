@@ -1,8 +1,6 @@
 import os
 import json
 import logging
-import re
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import google.generativeai as genai
@@ -11,7 +9,6 @@ app = Flask(__name__)
 CORS(app)
 
 api_key = os.environ.get("GEMINI_API_KEY")
-
 logging.basicConfig(level=logging.INFO)
 
 if api_key:
@@ -19,15 +16,11 @@ if api_key:
 else:
     logging.warning("GEMINI_API_KEY non trovata.")
 
-
-def get_available_model(preferred_version='2.5-pro'):
+def get_available_model(preferred_version='1.5-flash'):
     fallback_models = [
-        'gemini-2.5-pro',
-        'gemini-2.5-flash-lite',
-        'gemini-2-flash-lite',
-        'gemini-2.5-flash'
+        'gemini-1.5-flash',
+        'gemini-1.5-pro-latest',
     ]
-
     try:
         models = genai.list_models()
         available = [
@@ -39,29 +32,20 @@ def get_available_model(preferred_version='2.5-pro'):
             if preferred_version in m:
                 return m
 
-        for m in available:
-            if 'pro' in m.lower():
-                return m
-
-        return available[0]
+        return available[0] if available else fallback_models[0]
 
     except Exception as e:
         logging.error(f"Errore list_models: {e}")
         return fallback_models[0]
 
-
 MODEL_NAME = get_available_model()
 logging.info(f"Uso modello: {MODEL_NAME}")
-
 model = genai.GenerativeModel(MODEL_NAME)
-
 
 @app.route("/api/generate", methods=["POST"])
 def generate():
-
     data = request.json or {}
     user_prompt = data.get("prompt", "")
-
     if not user_prompt:
         return jsonify({"error": "Prompt mancante"}), 400
 
@@ -92,36 +76,21 @@ Richiesta utente:
             system_prompt,
             generation_config={
                 "temperature": 0.7,
-                "max_output_tokens": 4096,
-                "response_mime_type": "application/json"
+                "max_output_tokens": 8192,
+                "response_mime_type": "text/plain"
             }
         )
 
-        try:
-            parsed = json.loads(response.text)
-        except Exception:
-            logging.warning("JSON non valido, uso fallback raw")
-            parsed = {
-                "index": response.text,
-                "html": "",
-                "css": "",
-                "js": ""
-            }
-
-        if not parsed["index"]:
-            parsed["index"] = response.text
-
-        return jsonify(parsed)
+        html_code = response.text or ""
+        return jsonify({"index": html_code})
 
     except Exception as e:
         logging.exception("Errore generazione")
         return jsonify({"error": str(e)}), 500
 
-
 @app.route("/")
 def health():
     return {"status": "ok", "model": MODEL_NAME}
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
