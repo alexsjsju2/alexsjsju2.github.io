@@ -20,7 +20,7 @@ else:
     logging.warning("GEMINI_API_KEY non trovata.")
 
 
-def get_available_model(preferred_version='2.5-pro-exp'):
+def get_available_model(preferred_version='2.5-pro'):
     fallback_models = [
         'gemini-2.5-pro',
         'gemini-2.5-flash-lite',
