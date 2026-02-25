@@ -56,42 +56,6 @@ logging.info(f"Uso modello: {MODEL_NAME}")
 model = genai.GenerativeModel(MODEL_NAME)
 
 
-def extract_code_blocks(text):
-    """Estrae html/css/js se l'AI non manda JSON."""
-    result = {
-        "index": "",
-        "html": "",
-        "css": "",
-        "js": ""
-    }
-
-    try:
-        json_match = re.search(r'\{.*\}', text, re.S)
-        if json_match:
-            parsed = json.loads(json_match.group())
-            result.update(parsed)
-            return result
-    except:
-        pass
-
-    blocks = re.findall(r"```(\w+)?\n(.*?)```", text, re.S)
-
-    for lang, code in blocks:
-        lang = (lang or "").lower()
-
-        if "html" in lang:
-            result["html"] = code
-        elif "css" in lang:
-            result["css"] = code
-        elif "js" in lang or "javascript" in lang:
-            result["js"] = code
-
-    if "<html" in text.lower():
-        result["index"] = text
-
-    return result
-
-
 @app.route("/api/generate", methods=["POST"])
 def generate():
 
@@ -131,16 +95,24 @@ Richiesta utente:
             system_prompt,
             generation_config={
                 "temperature": 0.7,
-                "max_output_tokens": 4096
+                "max_output_tokens": 4096,
+                "response_mime_type": "application/json"
             }
         )
 
-        text = response.text
-
-        parsed = extract_code_blocks(text)
+        try:
+            parsed = json.loads(response.text)
+        except Exception:
+            logging.warning("JSON non valido, uso fallback raw")
+            parsed = {
+                "index": response.text,
+                "html": "",
+                "css": "",
+                "js": ""
+            }
 
         if not parsed["index"]:
-            parsed["index"] = text
+            parsed["index"] = response.text
 
         return jsonify(parsed)
 
