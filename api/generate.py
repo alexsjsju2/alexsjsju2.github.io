@@ -22,10 +22,10 @@ else:
 
 def get_available_model(preferred_version='2.5-pro-exp'):
     fallback_models = [
-        'gemini-2.5-pro-exp',
-        'gemini-1.5-pro-latest',
-        'gemini-1.5-flash',
-        'gemini-pro'
+        'gemini-2.5-pro',
+        'gemini-2.5-flash-lite',
+        'gemini-2-flash-lite',
+        'gemini-2.5-flash'
     ]
 
     try:
@@ -131,7 +131,7 @@ Richiesta utente:
             system_prompt,
             generation_config={
                 "temperature": 0.7,
-                "max_output_tokens": 8192
+                "max_output_tokens": 4096
             }
         )
 
