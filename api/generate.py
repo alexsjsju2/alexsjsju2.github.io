@@ -16,10 +16,16 @@ if api_key:
 else:
     logging.warning("GEMINI_API_KEY non trovata.")
 
-def get_available_model(preferred_version='2.5-pro'):
+def get_available_model(preferred_version='2.5-flash'):
     fallback_models = [
-        'gemini-2.5-pro',
-        'gemini-2.5-flash',
+        'Gemini 2.5 Flash',
+        'Gemini 3 Flash',
+        'Gemini 2.5 Flash Lite',
+        'Gemma 3 27B',
+        'Gemma 3 12B',
+        'Gemma 3 4B',
+        'Gemma 3 2B',
+        'Gemma 3 1B',
     ]
     try:
         models = genai.list_models()
