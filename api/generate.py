@@ -79,8 +79,6 @@ Richiesta utente:
         response = model.generate_content(
             system_prompt,
             generation_config={
-                "temperature": 0.7,
-                "max_output_tokens": 8192,
                 "response_mime_type": "text/plain"
             }
         )
