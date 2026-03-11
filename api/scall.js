@@ -13,6 +13,14 @@ if (!admin.apps.length) {
 
 db = admin.firestore();
 
+const SCALL_CRED = process.env.SCALL_CRED
+  ? JSON.parse(process.env.SCALL_CRED)
+  : {
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" }
+      ]
+    };
+
 module.exports = async (req, res) => {
 
   res.setHeader('Access-Control-Allow-Origin', 'https://www.alexsjsju.eu');
@@ -24,6 +32,10 @@ module.exports = async (req, res) => {
   const action = req.query.action || req.path.split('/').pop();
 
   try {
+
+    if (action === "get-ice-servers") {
+      return res.json(SCALL_CRED);
+    }
 
     if (action === "create-number") {
 
@@ -90,7 +102,6 @@ module.exports = async (req, res) => {
     if (action === "create-room") {
 
       const { caller, callee } = req.body;
-
       const roomId = crypto.randomUUID();
 
       await db.collection('rooms').doc(roomId).set({
@@ -109,7 +120,6 @@ module.exports = async (req, res) => {
     if (action === "get-room") {
 
       const roomId = req.query.roomId;
-
       const doc = await db.collection('rooms').doc(roomId).get();
 
       return res.json(doc.exists ? doc.data() : null);
@@ -137,7 +147,6 @@ module.exports = async (req, res) => {
     if (action === "delete-room") {
 
       const roomId = req.query.roomId;
-
       await db.collection('rooms').doc(roomId).delete();
 
       return res.json({ success: true });
@@ -188,9 +197,7 @@ module.exports = async (req, res) => {
         .get();
 
       const batch = db.batch();
-
       numSnapshot.docs.forEach(doc => batch.delete(doc.ref));
-
       await batch.commit();
 
       const twoHoursAgo = admin.firestore.Timestamp.fromDate(
@@ -202,9 +209,7 @@ module.exports = async (req, res) => {
         .get();
 
       const roomBatch = db.batch();
-
       roomSnapshot.docs.forEach(doc => roomBatch.delete(doc.ref));
-
       await roomBatch.commit();
 
       return res.json({ cleaned: true });
