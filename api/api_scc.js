@@ -8,7 +8,7 @@ export default function handler(req, res) {
   }
 
   if (req.method === 'POST') {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Origin', 'https://www.alexsjsju.eu');
 
     const { step, value } = req.body;
 
