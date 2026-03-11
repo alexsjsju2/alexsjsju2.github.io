@@ -102,6 +102,11 @@ module.exports = async (req, res) => {
     if (action === "create-room") {
 
       const { caller, callee } = req.body;
+      const callerDoc = await db.collection('numbers').doc(caller).get();
+      if (!callerDoc.exists) return res.status(404).json({ success: false, error: "Caller not found" });
+      const calleeDoc = await db.collection('numbers').doc(callee).get();
+      if (!calleeDoc.exists) return res.status(404).json({ success: false, error: "Callee not found" });
+
       const roomId = crypto.randomUUID();
 
       await db.collection('rooms').doc(roomId).set({
@@ -110,8 +115,7 @@ module.exports = async (req, res) => {
         status: "pending",
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         offer: null,
-        answer: null,
-        iceCandidates: []
+        answer: null
       });
 
       return res.json({ roomId });
@@ -121,14 +125,27 @@ module.exports = async (req, res) => {
 
       const roomId = req.query.roomId;
       const doc = await db.collection('rooms').doc(roomId).get();
+      if (!doc.exists) return res.json(null);
 
-      return res.json(doc.exists ? doc.data() : null);
+      let data = doc.data();
+      const candSnap = await db.collection('rooms').doc(roomId).collection('candidates').get();
+      data.iceCandidates = candSnap.docs.map(d => d.data());
+
+      return res.json(data);
     }
 
     if (action === "update-room") {
 
       const roomId = req.query.roomId;
+      const actor = req.query.actor;
       const { offer, answer, iceCandidate } = req.body;
+
+      const roomDoc = await db.collection('rooms').doc(roomId).get();
+      if (!roomDoc.exists) return res.status(404).json({ success: false });
+      const room = roomDoc.data();
+      if (actor && actor !== room.caller && actor !== room.callee) {
+        return res.status(403).json({ success: false });
+      }
 
       const ref = db.collection('rooms').doc(roomId);
 
@@ -136,9 +153,7 @@ module.exports = async (req, res) => {
       if (answer) await ref.update({ answer });
 
       if (iceCandidate) {
-        await ref.update({
-          iceCandidates: admin.firestore.FieldValue.arrayUnion(iceCandidate)
-        });
+        await ref.collection('candidates').add(iceCandidate);
       }
 
       return res.json({ success: true });
@@ -147,6 +162,20 @@ module.exports = async (req, res) => {
     if (action === "delete-room") {
 
       const roomId = req.query.roomId;
+      const actor = req.query.actor;
+
+      const roomDoc = await db.collection('rooms').doc(roomId).get();
+      if (!roomDoc.exists) return res.json({ success: true });
+      const room = roomDoc.data();
+      if (actor && actor !== room.caller && actor !== room.callee) {
+        return res.status(403).json({ success: false });
+      }
+
+      const candSnap = await db.collection('rooms').doc(roomId).collection('candidates').get();
+      const batch = db.batch();
+      candSnap.docs.forEach(doc => batch.delete(doc.ref));
+      await batch.commit();
+
       await db.collection('rooms').doc(roomId).delete();
 
       return res.json({ success: true });
@@ -171,7 +200,14 @@ module.exports = async (req, res) => {
 
     if (action === "delete-number") {
 
-      const { number } = req.body;
+      const { number, password } = req.body;
+      if (!number || !password) return res.status(400).json({ success: false });
+
+      const doc = await db.collection('numbers').doc(number).get();
+      if (!doc.exists) return res.status(404).json({ success: false });
+
+      const valid = await bcrypt.compare(password, doc.data().hashedPassword);
+      if (!valid) return res.status(401).json({ success: false });
 
       await db.collection('numbers').doc(number).delete();
 
@@ -200,12 +236,12 @@ module.exports = async (req, res) => {
       numSnapshot.docs.forEach(doc => batch.delete(doc.ref));
       await batch.commit();
 
-      const twoHoursAgo = admin.firestore.Timestamp.fromDate(
-        new Date(Date.now() - 2*60*60*1000)
+      const fiveMinutesAgo = admin.firestore.Timestamp.fromDate(
+        new Date(Date.now() - 5*60*1000)
       );
 
       const roomSnapshot = await db.collection('rooms')
-        .where('createdAt', '<', twoHoursAgo)
+        .where('createdAt', '<', fiveMinutesAgo)
         .get();
 
       const roomBatch = db.batch();
@@ -218,7 +254,7 @@ module.exports = async (req, res) => {
     return res.status(404).json({ error: "Action non trovata" });
 
   } catch (err) {
-    console.error(err);
+    console.error("SCALL ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
   }
 
