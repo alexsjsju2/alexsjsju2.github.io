@@ -150,7 +150,8 @@ module.exports = async (req, res) => {
       const ref = db.collection('rooms').doc(roomId);
 
       if (offer) await ref.update({ offer });
-      if (answer) await ref.update({ answer });
+      if (answer) { await ref.update({ answer, status: "connected"});
+      }
 
       if (iceCandidate) {
         await ref.collection('candidates').add(iceCandidate);
