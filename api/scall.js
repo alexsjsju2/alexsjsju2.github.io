@@ -17,15 +17,15 @@ const SCALL_CRED = process.env.SCALL_CRED
   ? JSON.parse(process.env.SCALL_CRED)
   : {
       iceServers: [
-        { urls: "stun:stun.l.google.com:19302" }
+        { urls: "stun:stun.relay.metered.ca:80" }
       ]
     };
 
 module.exports = async (req, res) => {
 
-  res.setHeader('Access-Control-Allow-Origin', 'https://www.alexsjsju.eu', 'https://www.apisecurity-iota.vercel.app/api/scall');
+  res.setHeader('Access-Control-Allow-Origin', 'https://www.alexsjsju.eu');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Cache-Control");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Cache-Control, Pragma");
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
