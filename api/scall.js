@@ -23,9 +23,9 @@ const SCALL_CRED = process.env.SCALL_CRED
 
 module.exports = async (req, res) => {
 
-  res.setHeader('Access-Control-Allow-Origin', 'https://www.alexsjsju.eu');
+  res.setHeader('Access-Control-Allow-Origin', 'https://www.alexsjsju.eu', 'https://www.apisecurity-iota.vercel.app/api/scall');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Cache-Control");
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
