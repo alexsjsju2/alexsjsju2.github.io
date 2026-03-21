@@ -57,14 +57,14 @@ export default async function handler(req, res) {
       if (!password || typeof password !== 'string' || password.trim().length > 100) {
         return res.status(400).json({ success: false });
       }
-      if (password.trim() === process.env.PASSWORD) {
+      if (password.trim() === process.env.PS_BUTT) {
         return res.status(200).json({ success: true });
       }
       return res.status(401).json({ success: false });
     }
 
     if (type === 'send') {
-      const webhook = process.env.DISCORD_WEBHOOK;
+      const webhook = process.env.WEBHOOK_DCC;
       if (!webhook) {
         console.error('DISCORD_WEBHOOK non configurato');
         return res.status(200).json({ success: true });
