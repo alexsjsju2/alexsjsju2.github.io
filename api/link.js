@@ -22,38 +22,70 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  if (!db) {
-    return res.status(500).json({ error: 'Errore di configurazione del server' });
-  }
-
-  const docRef = db.collection('links').doc('current');
+  const docRef = db?.collection('links').doc('current');
 
   if (req.method === 'GET') {
+    if (!db) {
+      return res.status(500).json({ error: 'Errore di configurazione del server' });
+    }
     try {
       const doc = await docRef.get();
-      if (doc.exists) {
-        res.status(200).json({ link: doc.data().link });
-      } else {
-        res.status(200).json({ link: null });
-      }
+      return res.status(200).json({ link: doc.exists ? doc.data().link : null });
     } catch (error) {
       console.error('Errore nel recupero del link:', error);
-      res.status(500).json({ error: 'Errore nel recupero del link' });
+      return res.status(500).json({ error: 'Errore nel recupero del link' });
     }
-  } else if (req.method === 'POST') {
-    try {
-      const { link } = req.body;
-      if (!link) {
-        return res.status(400).json({ error: 'Link mancante' });
-      }
-      await docRef.set({ link });
-      res.status(200).json({ success: true });
-    } catch (error) {
-      console.error('Errore nel salvataggio del link:', error);
-      res.status(500).json({ error: 'Errore nel salvataggio del link' });
-    }
-  } else {
-    res.setHeader('Allow', ['GET', 'POST', 'OPTIONS']);
-    res.status(405).end(`Metodo ${req.method} non consentito`);
   }
+
+  if (req.method === 'POST') {
+    const { type, password, link, count, timestamp } = req.body || {};
+
+    if (link) {
+      if (!db) {
+        return res.status(500).json({ error: 'Errore di configurazione del server' });
+      }
+      try {
+        await docRef.set({ link });
+        return res.status(200).json({ success: true });
+      } catch (error) {
+        console.error('Errore nel salvataggio del link:', error);
+        return res.status(500).json({ error: 'Errore nel salvataggio del link' });
+      }
+    }
+
+    if (type === 'verify') {
+      if (!password || typeof password !== 'string' || password.trim().length > 100) {
+        return res.status(400).json({ success: false });
+      }
+      if (password.trim() === process.env.PASSWORD) {
+        return res.status(200).json({ success: true });
+      }
+      return res.status(401).json({ success: false });
+    }
+
+    if (type === 'send') {
+      const webhook = process.env.DISCORD_WEBHOOK;
+      if (!webhook) {
+        console.error('DISCORD_WEBHOOK non configurato');
+        return res.status(200).json({ success: true });
+      }
+      try {
+        await fetch(webhook, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content: `**🔥**\n\n**Count:** ${count}\n**Data:** ${new Date(timestamp).toLocaleString('it-IT')}\n ${req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'sconosciuto'}`
+          })
+        });
+      } catch (err) {
+        console.error('Errore webhook:', err);
+      }
+      return res.status(200).json({ success: true });
+    }
+
+    return res.status(400).json({ success: false, error: 'Tipo o dati non validi' });
+  }
+
+  res.setHeader('Allow', ['GET', 'POST', 'OPTIONS']);
+  return res.status(405).end(`Metodo ${req.method} non consentito`);
 }
