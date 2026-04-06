@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <title>Stato dei progetti</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {margin: 0;font-family: Arial, sans-serif;background: #0f0f0f;color: #e0e0e0; }
+    header {text-align: center;padding: 40px 20px 10px;border-bottom: 1px solid #2a2a2a; }
+    h1 {margin: 0;font-weight: 300; }
+    .container {max-width: 900px;margin: 30px auto;padding: 0 20px; }
+    .project {background: #1a1a1a;border: 1px solid #2a2a2a;border-radius: 10px;padding: 20px;margin-bottom: 20px;cursor: pointer;transition: 0.2s; }
+    .project:hover {border-color: #555; }
+    .project-title {font-size: 20px;margin-bottom: 10px; }
+    .status {display: inline-block;padding: 5px 10px;border-radius: 20px;font-size: 12px;margin-top: 10px;font-weight: bold; }
+    .attivo {background: #0f2a0f;border: 1px solid #2ecc71;color: #2ecc71; }
+    .pausa {background: #2a1f0f;border: 1px solid #f39c12;color: #f39c12; }
+    .abbandonato {background: #2a0f0f;border: 1px solid #e74c3c;color: #e74c3c; }
+    .idealizzazione {background: #0f1a2a;border: 1px solid #3498db;color: #3498db; }
+    .coda {background: #1a1a1a;border: 1px solid #888;color: #aaa; }
+    .project-desc {margin-top: 15px;font-size: 14px;color: #bbb;display: none;line-height: 1.6; }
+    .project.open .project-desc {display: block; }
+    .project-desc ul {padding-left: 20px;margin: 10px 0; }
+    .project-desc li {margin-bottom: 5px; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Stato dei progetti</h1>
+</header>
+<div class="container" id="project-list"></div>
+<script>
+
+  const projects = [
+    {
+      name: "Lorel",
+      description: `Lorel
+Un AI auto-evolutiva con memoria a decadenza temporale, coscienza avanzata con emozioni/bisogni/ecc... interagibile tramite chat o altre funzioni e con un sistema di pensiero autonomo.
+Può:
+- creare siti
+- auto-modificarsi e migliorarsi nel tempo automaticamente
+- fare ricerche web
+
+`,
+      status: "idealizzazione"
+    },
+    {
+      name: "Nixar",
+      description: `Nixar
+Un intero linguaggio studiato per compattare le parole in singoli simboli, con l'aspetto dei cerchi arcanici.
+Ogni riga, cerchio, e qualsiasi altro "disegno" avrà uno scopo ben preciso.
+`,
+      status: "coda"
+    },
+    {
+      name: "Futorion",
+      description: `Futorion
+Un sito alimentato da AI, con lo scopo di prevedere futuri/scelte o aiutare l'utente a "capire" in una vasta infinita di campi.
+
+Idea: graficamente sarà a cerchi infiniti interattivi con cui si possono effettuare e sommare scelte/situazioni/ecc.. per ottenere l'esatta corrispondenza dell'utente per poi aiutare nella preveizioni di molteplici futuri.
+
+`,
+      status: "coda"
+    },
+    {
+      name: "CallSecurity",
+      description: `CallSecurity
+Un sito con un sistema di numeri temporanei, che permette di effettuare chiamate cifrate con più livelli di sicurezza.
+Permettere una tale sicurezza richiede molte risorse per cui sono chiamate a breve durata.
+`,
+      status: "attivo"
+    },
+    {
+      name: "AleXAll",
+      description: `AleXAll
+Un sito con una vasta selezione di siti accuratamente scelti per funzionalità o scopi utili.`,
+      status: "attivo"
+    },
+
+
+    {
+      name: "Altri Progetti...",
+      description: `Alcuni progetti non sono in questa lista poiché sono privati o totalmente personali.
+
+`,
+      status: "attivo"
+    }
+  ];
+
+  const container = document.getElementById("project-list");
+  function getStatusLabel(status) {
+    switch(status) {
+      case "attivo": return "Attivo";
+      case "pausa": return "In pausa";
+      case "abbandonato": return "Abbandonato";
+      case "idealizzazione": return "In idealizzazione";
+      case "coda": return "In coda";
+      default: return "Sconosciuto";
+    }
+  }
+  function parseMarkdown(text) {
+    let html = text;
+    html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+    html = html.replace(/\*(.*?)\*/g, "<em>$1</em>");
+    if (html.includes("- ")) {
+      const lines = html.split("\n");
+      let inList = false;
+      let result = "";
+      lines.forEach(line => {
+        if (line.startsWith("- ")) {
+          if (!inList) {
+            result += "<ul>";
+            inList = true;
+          }
+          result += `<li>${line.substring(2)}</li>`;
+        } else {
+          if (inList) {
+            result += "</ul>";
+            inList = false;
+          }
+          result += `<p>${line}</p>`;
+        }
+      });
+      if (inList) result += "</ul>";
+      html = result;
+    } else {
+      html = html.split("\n").map(line => `<p>${line}</p>`).join("");
+    }
+    return html;
+  }
+  projects.forEach(project => {
+    const div = document.createElement("div");
+    div.className = "project";
+    div.innerHTML = `
+      <div class="project-title">${project.name}</div>
+      <div class="status ${project.status}">
+        ${getStatusLabel(project.status)}
+      </div>
+      <div class="project-desc">
+        ${parseMarkdown(project.description)}
+      </div>
+    `;
+    div.addEventListener("click", () => {
+      div.classList.toggle("open");
+    });
+    container.appendChild(div);
+  });
+</script>
+</body>
+</html>
