@@ -21,43 +21,47 @@ return genAI.getGenerativeModel({model:m})
 return genAI.getGenerativeModel({model:"gemini-1.5-flash"})
 }
 
-export default async function handler(req,res){
-if(req.method!=="POST")return res.status(405).end()
-
-const {history=[]}=req.body
-
-const model=await getModel()
-
-const prompt=`
-Percorso attuale:
-${history.join(" -> ")}
-
-Genera tra 12 e 18 possibili prossime scelte.
-
-REGOLE:
-- brevi (1-3 parole)
-- copertura ampia (idee diverse)
-- utili per esplorazione, decisione, apprendimento, futuro
-- niente duplicati
-
-Formato JSON:
-{"options":["..."]}
-`
-
-try{
-const result=await model.generateContent(prompt)
-const text=result.response.text()
-
-let parsed
-try{
-parsed=JSON.parse(text)
-}catch{
-parsed={options:["Errore","Riprova","Nuova strada","Alternativa","Altro"]}
+export default async function handler(req, res) {
+if (req.method !== "POST") {
+return res.status(405).json({ error: "Method not allowed" })
 }
 
-res.status(200).json(parsed)
+try {
+const { history = [] } = req.body
 
-}catch(e){
-res.status(500).json({options:["Errore AI","Fallback","Ripeti","Nuovo","Altro"]})
+const response = await fetch(
+`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+{
+method: "POST",
+headers: { "Content-Type": "application/json" },
+body: JSON.stringify({
+contents: [{ parts: [{ text: `
+Percorso: ${history.join(" -> ")}
+
+Genera 15 scelte brevi (1-3 parole).
+Formato JSON:
+{"options":["..."]}
+` }] }]
+})
+}
+)
+
+const data = await response.json()
+
+let text = data?.candidates?.[0]?.content?.parts?.[0]?.text || ""
+
+try {
+const parsed = JSON.parse(text)
+return res.status(200).json(parsed)
+} catch {
+return res.status(200).json({
+options: ["Fallback","Nuova idea","Alternativa","Esplora","Altro"]
+})
+}
+
+} catch (e) {
+return res.status(500).json({
+options: ["Errore","Riprova","Fallback","Nuovo","Altro"]
+})
 }
 }
