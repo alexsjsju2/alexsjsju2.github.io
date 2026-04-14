@@ -1,6 +1,4 @@
-import os
-import json
-import re
+import os, json, logging, re, random
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import google.generativeai as genai
@@ -8,7 +6,17 @@ import google.generativeai as genai
 app = Flask(__name__)
 CORS(app)
 
-MODELS_TO_TRY = [
+api_key = os.environ.get("GEMINI_API_KEY")
+
+logging.basicConfig(level=logging.INFO)
+
+if api_key:
+    genai.configure(api_key=api_key)
+else:
+    logging.warning("GEMINI_API_KEY non trovata.")
+
+def get_available_model():
+    fallback = [
     "Gemini 2.5 Flash",
     "Gemini 3 Flash",
     "Gemini 2.5 Flash Lite",
@@ -17,129 +25,84 @@ MODELS_TO_TRY = [
     "Gemma 3 4B",
     "Gemma 3 2B",
     "Gemma 3 1B"
-]
+    ]
+    try:
+        models = genai.list_models()
+        available = [m.name for m in models if "generateContent" in m.supported_generation_methods]
+        return available[0] if available else fallback[0]
+    except:
+        return fallback[0]
 
-api_key = os.environ.get("GEMINI_API_KEY")
-if api_key:
-    genai.configure(api_key=api_key)
+MODEL_NAME = get_available_model()
+model = genai.GenerativeModel(MODEL_NAME)
 
 def extract_json(text):
     if not text:
         return None
-    t = text.strip()
-    if t.startswith("```"):
-        t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t, flags=re.I | re.S).strip()
-    m = re.search(r"(\[.*\]|\{.*\})", t, re.S)
-    if m:
-        t = m.group(0)
-    try:
-        return json.loads(t)
-    except:
-        return None
+    text = re.sub(r"```json|```", "", text).strip()
+    match = re.search(r"\{.*\}", text, re.S)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except:
+            return None
+    return None
 
-@app.route("/api/predict", methods=["POST", "OPTIONS"])
+@app.route("/api/predict", methods=["POST"])
 def predict():
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-
     data = request.json or {}
-    history = [str(x).strip() for x in data.get("history", []) if str(x).strip()]
-    selected = str(data.get("selected", "")).strip()
-    depth = int(data.get("depth", len(history) + 1))
-
-    percorso = " → ".join(history) if history else "Scenario iniziale"
+    history = data.get("history", [])
+    selected = data.get("selected", "")
 
     prompt = f"""
-Sei un esperto di previsione del futuro altamente realistico.
-Devi generare **esattamente 3 previsioni** bilanciate per il seguente scenario:
+Genera 3 possibili futuri.
 
-PERCORSO: {percorso}
-SCELTA ATTUALE: {selected}
-LIVELLO: {depth}
+Contesto: {" -> ".join(history)}
+Scelta: {selected}
 
-Regole obbligatorie:
-- Esattamente 3 previsioni:
-  1. Ottimista / positiva (probabilità alta)
-  2. Realistica / bilanciata (probabilità media)
-  3. Pessimista / negativa (probabilità bassa)
-- Ogni previsione deve avere:
-  • "title": massimo 3 parole (titolo breve e incisivo)
-  • "description": descrizione dettagliata (2-4 frasi)
-  • "probability": numero intero tra 12 e 92
-- Risposte in italiano, concrete, realistiche e diverse tra loro.
-- NON ripetere concetti già presenti nel percorso.
+Regole:
+- 3 risposte: positiva, neutra, negativa
+- Ogni risposta:
+    titolo (max 3 parole)
+    descrizione
+    probabilità (0-100)
+    fattori: tempo, risorse, rischio, variabili_esterne
 
-Restituisci **SOLO** un JSON valido:
-
-[
-  {{"title": "...", "description": "...", "probability": 78}},
-  {{"title": "...", "description": "...", "probability": 51}},
-  {{"title": "...", "description": "...", "probability": 29}}
-]
+Formato JSON:
+{{
+ "results":[
+   {{
+    "title":"",
+    "description":"",
+    "probability":0,
+    "factors":{{"tempo":0,"risorse":0,"rischio":0,"variabili":0}}
+   }}
+ ]
+}}
 """
 
-    for model_name in MODELS_TO_TRY:
-        try:
-            model = genai.GenerativeModel(model_name)
-            
-            response = model.generate_content(
-                prompt,
-                generation_config={
-                    "response_mime_type": "application/json",
-                    "temperature": 0.85,
-                    "top_p": 0.95,
-                    "max_output_tokens": 1800
-                }
-            )
+    try:
+        res = model.generate_content(prompt)
+        parsed = extract_json(res.text)
 
-            parsed = extract_json(response.text)
+        if not parsed:
+            raise Exception("Parsing fallito")
 
-            if isinstance(parsed, list) and len(parsed) >= 3:
-                clean_predictions = []
-                seen = set()
+        return jsonify(parsed)
 
-                for p in parsed[:3]:
-                    if not isinstance(p, dict):
-                        continue
-                    title = str(p.get("title", "")).strip()
-                    if not title or title.lower() in seen:
-                        continue
-                    seen.add(title.lower())
+    except Exception as e:
+        logging.error(e)
 
-                    clean_predictions.append({
-                        "title": title,
-                        "description": str(p.get("description", "Previsione basata sul percorso scelto.")).strip(),
-                        "probability": int(p.get("probability", 50))
-                    })
-
-                while len(clean_predictions) < 3:
-                    clean_predictions.append({
-                        "title": f"Previsione {len(clean_predictions)+1}",
-                        "description": "Scenario futuro plausibile.",
-                        "probability": 45
-                    })
-
-                return jsonify({"predictions": clean_predictions[:3]})
-
-        except Exception:
-            continue
-
-    fallback = [
-        {"title": "Crescita forte", "description": "Il percorso scelto porta a risultati molto positivi grazie a fattori favorevoli.", "probability": 74},
-        {"title": "Sviluppo stabile", "description": "Evoluzione lineare con qualche ostacolo gestibile.", "probability": 52},
-        {"title": "Rallentamento", "description": "Imprevisti esterni limitano fortemente i risultati attesi.", "probability": 28}
-    ]
-    return jsonify({"predictions": fallback}), 200
-
-
-@app.route("/")
-def health():
-    return jsonify({
-        "status": "ok",
-        "models": MODELS_TO_TRY,
-        "version": "2.1 - Previsioni Futuro (Multi-Model Fallback)"
-    })
-
+        return jsonify({
+            "results": [
+                {"title":"Successo","description":"Esito positivo","probability":random.randint(60,90),
+                 "factors":{"tempo":70,"risorse":60,"rischio":20,"variabili":40}},
+                {"title":"Stabile","description":"Risultato neutro","probability":random.randint(40,70),
+                 "factors":{"tempo":50,"risorse":50,"rischio":40,"variabili":50}},
+                {"title":"Fallimento","description":"Esito negativo","probability":random.randint(10,40),
+                 "factors":{"tempo":30,"risorse":20,"rischio":80,"variabili":70}}
+            ]
+        })
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    app.run(port=8080)
