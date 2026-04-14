@@ -1,4 +1,4 @@
-import os, json, logging, re, random
+import os, json, logging, re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import google.generativeai as genai
@@ -7,7 +7,6 @@ app = Flask(__name__)
 CORS(app)
 
 api_key = os.environ.get("GEMINI_API_KEY")
-
 logging.basicConfig(level=logging.INFO)
 
 if api_key:
@@ -16,93 +15,82 @@ else:
     logging.warning("GEMINI_API_KEY non trovata.")
 
 def get_available_model():
-    fallback = [
-    "Gemini 2.5 Flash",
-    "Gemini 3 Flash",
-    "Gemini 2.5 Flash Lite",
-    "Gemma 3 27B",
-    "Gemma 3 12B",
-    "Gemma 3 4B",
-    "Gemma 3 2B",
-    "Gemma 3 1B"
+    fallback_models = [
+        "Gemini 2.5 Flash","Gemini 3 Flash","Gemini 2.5 Flash Lite",
+        "Gemma 3 27B","Gemma 3 12B","Gemma 3 4B","Gemma 3 2B","Gemma 3 1B"
     ]
     try:
         models = genai.list_models()
         available = [m.name for m in models if "generateContent" in m.supported_generation_methods]
-        return available[0] if available else fallback[0]
+        return available[0] if available else fallback_models[0]
     except:
-        return fallback[0]
+        return fallback_models[0]
 
 MODEL_NAME = get_available_model()
 model = genai.GenerativeModel(MODEL_NAME)
 
 def extract_json(text):
-    if not text:
+    if not text: return None
+    t = text.strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t, flags=re.S).strip()
+    try:
+        return json.loads(t)
+    except:
         return None
-    text = re.sub(r"```json|```", "", text).strip()
-    match = re.search(r"\{.*\}", text, re.S)
-    if match:
-        try:
-            return json.loads(match.group(0))
-        except:
-            return None
-    return None
 
 @app.route("/api/predict", methods=["POST"])
 def predict():
     data = request.json or {}
     history = data.get("history", [])
+    comments = data.get("comments", [])
     selected = data.get("selected", "")
 
+    context = " -> ".join(history)
+    comments_text = " | ".join(comments)
+
     prompt = f"""
-Genera 3 possibili futuri.
+Sei un sistema avanzato di previsione del futuro.
 
-Contesto: {" -> ".join(history)}
-Scelta: {selected}
+INPUT UTENTE:
+{context}
 
-Regole:
-- 3 risposte: positiva, neutra, negativa
-- Ogni risposta:
-    titolo (max 3 parole)
-    descrizione
-    probabilità (0-100)
-    fattori: tempo, risorse, rischio, variabili_esterne
+SCELTA ATTUALE:
+{selected}
 
-Formato JSON:
+COMMENTI (fattori aggiuntivi):
+{comments_text}
+
+OBIETTIVO:
+Genera 3 possibili futuri:
+- positivo
+- bilanciato
+- negativo
+
+Per ogni risposta fornisci:
+- titolo (max 3 parole)
+- descrizione realistica
+- probabilità reale (non casuale)
+
+Rispondi SOLO JSON:
 {{
- "results":[
-   {{
-    "title":"",
-    "description":"",
-    "probability":0,
-    "factors":{{"tempo":0,"risorse":0,"rischio":0,"variabili":0}}
-   }}
- ]
+  "results":[
+    {{"title":"", "description":"", "probability":0}}
+  ]
 }}
 """
 
     try:
-        res = model.generate_content(prompt)
-        parsed = extract_json(res.text)
-
-        if not parsed:
-            raise Exception("Parsing fallito")
-
-        return jsonify(parsed)
-
+        response = model.generate_content(prompt)
+        parsed = extract_json(response.text)
+        return jsonify(parsed if parsed else {"results": []})
     except Exception as e:
-        logging.error(e)
+        logging.exception("Errore")
+        return jsonify({"results": []}), 500
 
-        return jsonify({
-            "results": [
-                {"title":"Successo","description":"Esito positivo","probability":random.randint(60,90),
-                 "factors":{"tempo":70,"risorse":60,"rischio":20,"variabili":40}},
-                {"title":"Stabile","description":"Risultato neutro","probability":random.randint(40,70),
-                 "factors":{"tempo":50,"risorse":50,"rischio":40,"variabili":50}},
-                {"title":"Fallimento","description":"Esito negativo","probability":random.randint(10,40),
-                 "factors":{"tempo":30,"risorse":20,"rischio":80,"variabili":70}}
-            ]
-        })
+@app.route("/")
+def home():
+    return jsonify({"status": "ok", "model": MODEL_NAME})
 
 if __name__ == "__main__":
     app.run(port=8080)
