@@ -15,10 +15,7 @@ else:
     logging.warning("GEMINI_API_KEY non trovata.")
 
 def get_available_model():
-    fallback_models = [
-        "Gemini 2.5 Flash","Gemini 3 Flash","Gemini 2.5 Flash Lite",
-        "Gemma 3 27B","Gemma 3 12B","Gemma 3 4B","Gemma 3 2B","Gemma 3 1B"
-    ]
+    fallback_models = ["Gemini 2.5 Flash","Gemini 3 Flash","Gemini 2.5 Flash Lite","Gemma 3 27B","Gemma 3 12B","Gemma 3 4B","Gemma 3 2B","Gemma 3 1B"]
     try:
         models = genai.list_models()
         available = [m.name for m in models if "generateContent" in m.supported_generation_methods]
@@ -46,46 +43,44 @@ def predict():
     comments = data.get("comments", [])
     selected = data.get("selected", "")
 
-    context = " -> ".join(history)
+    context = " → ".join(history)
     comments_text = " | ".join(comments)
 
-    prompt = f"""
-Sei un sistema avanzato di previsione del futuro.
+    prompt = f"""Sei un sistema di previsione del futuro estremamente preciso.
 
-INPUT UTENTE:
+INPUT:
 {context}
 
 SCELTA ATTUALE:
 {selected}
 
-COMMENTI (fattori aggiuntivi):
+COMMENTI AGGIUNTIVI:
 {comments_text}
 
-OBIETTIVO:
-Genera 3 possibili futuri:
-- positivo
-- bilanciato
-- negativo
-
-Per ogni risposta fornisci:
-- titolo (max 3 parole)
-- descrizione realistica
-- probabilità reale (non casuale)
-
-Rispondi SOLO JSON:
+ISTRUZIONI:
+1. Valuta se hai abbastanza dettagli (chi, cosa, quando, dove, contesto, rischi).
+2. Se i dati sono troppo vaghi → restituisci SOLO JSON con domande:
 {{
-  "results":[
-    {{"title":"", "description":"", "probability":0}}
+  "questions": ["Domanda specifica 1?", "Domanda specifica 2?"],
+  "message": "Per una previsione più accurata rispondi a queste domande"
+}}
+
+3. Altrimenti genera 3 futuri realistici (positivo / bilanciato / negativo) e rispondi SOLO con:
+{{
+  "results": [
+    {{"title": "...", "description": "...", "probability": 0}},
+    ...
   ]
 }}
-"""
+
+Titoli max 3 parole. Descrizioni 2-3 frasi realistiche. Probabilità basate su logica (somma ≈100)."""
 
     try:
         response = model.generate_content(prompt)
         parsed = extract_json(response.text)
         return jsonify(parsed if parsed else {"results": []})
     except Exception as e:
-        logging.exception("Errore")
+        logging.exception("Errore Gemini")
         return jsonify({"results": []}), 500
 
 @app.route("/")
@@ -93,4 +88,4 @@ def home():
     return jsonify({"status": "ok", "model": MODEL_NAME})
 
 if __name__ == "__main__":
-    app.run(port=8080)
+    app.run(port=8080, debug=True)
