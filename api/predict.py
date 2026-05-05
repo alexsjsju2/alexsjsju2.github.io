@@ -15,13 +15,28 @@ else:
     logging.warning("GEMINI_API_KEY non trovata.")
 
 def get_available_model():
-    fallback_models = ["Gemini 3 Flash Live"]
+    preferred_models = [
+        "models/gemini-3-flash-live",
+        "models/gemini-3-flash",
+        "models/gemini-2.5-flash"
+    ]
+
     try:
         models = genai.list_models()
-        available = [m.name for m in models if "generateContent" in m.supported_generation_methods]
-        return available[0] if available else fallback_models[0]
+        available = [
+            m.name for m in models
+            if "generateContent" in m.supported_generation_methods
+        ]
+
+        for preferred in preferred_models:
+            for model_name in available:
+                if preferred in model_name:
+                    return model_name
+
+        return available[0] if available else preferred_models[-1]
+
     except:
-        return fallback_models[0]
+        return preferred_models[-1]
 
 MODEL_NAME = get_available_model()
 model = genai.GenerativeModel(MODEL_NAME)
