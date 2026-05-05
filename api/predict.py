@@ -16,9 +16,9 @@ else:
 
 def get_available_model():
     preferred_models = [
-        "models/gemini-3-flash-live",
         "models/gemini-3-flash",
-        "models/gemini-2.5-flash"
+        "models/gemini-2.5-flash",
+        "models/gemma-3-27b"
     ]
 
     try:
