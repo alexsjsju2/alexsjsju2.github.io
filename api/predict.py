@@ -14,49 +14,33 @@ if api_key:
 else:
     logging.warning("GEMINI_API_KEY non trovata.")
 
-def get_available_model():
-    preferred_models = [
-        "models/gemini-3-flash",
-        "models/gemini-2.5-flash",
-        "models/gemma-3-27b"
-    ]
+AVAILABLE_MODELS = {
+    "gemini-2.5-flash": "models/gemini-2.5-flash",
+    "gemini-3-flash": "models/gemini-3-flash",
+    "gemma-3-27b": "models/gemma-3-27b"
+}
 
+def get_model_instance(model_name):
     try:
-        models = genai.list_models()
-        available = [
-            m.name for m in models
-            if "generateContent" in m.supported_generation_methods
-        ]
-
-        for preferred in preferred_models:
-            for model_name in available:
-                if preferred in model_name:
-                    return model_name
-
-        return available[0] if available else preferred_models[-1]
-
+        model_path = AVAILABLE_MODELS.get(model_name, "models/gemini-2.5-flash")
+        return genai.GenerativeModel(model_path)
     except:
-        return preferred_models[-1]
+        return genai.GenerativeModel("models/gemini-2.5-flash")
 
-MODEL_NAME = get_available_model()
-model = genai.GenerativeModel(MODEL_NAME)
-
-def extract_json(text):
-    if not text: return None
-    t = text.strip()
-    if t.startswith("```"):
-        t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t, flags=re.S).strip()
-    try:
-        return json.loads(t)
-    except:
-        return None
+current_model = get_model_instance("gemini-2.5-flash")
 
 @app.route("/api/predict", methods=["POST"])
 def predict():
+    global current_model
+
     data = request.json or {}
     history = data.get("history", [])
     comments = data.get("comments", [])
     selected = data.get("selected", "")
+    requested_model = data.get("model") 
+
+    if requested_model and requested_model in AVAILABLE_MODELS:
+        current_model = get_model_instance(requested_model)
 
     context = " → ".join(history)
     comments_text = " | ".join(comments)
@@ -80,7 +64,7 @@ ISTRUZIONI:
   "message": "Per una previsione più accurata rispondi a queste domande"
 }}
 
-3. Altrimenti genera 3 futuri realistici (positivo / bilanciato / negativo) e rispondi SOLO con:
+3. Altrimenti genera fino a 8-10 futuri realistici (non limitarti a 3) usando logica quantistica (molti mondi / rami possibili) e rispondi SOLO con:
 {{
   "results": [
     {{"title": "...", "description": "...", "probability": 0}},
@@ -88,19 +72,40 @@ ISTRUZIONI:
   ]
 }}
 
-Titoli max 3 parole. Descrizioni 2-3 frasi realistiche. Probabilità basate su logica (somma ≈100)."""
+Titoli max 4 parole. Descrizioni 2-4 frasi realistiche. Puoi generare da 2 a 10 rami in base alla complessità."""
 
     try:
-        response = model.generate_content(prompt)
+        response = current_model.generate_content(prompt)
         parsed = extract_json(response.text)
+        
+        logging.info(f"Modello usato: {requested_model or 'default'} | Risultati generati: {len(parsed.get('results', [])) if parsed else 0}")
+        
         return jsonify(parsed if parsed else {"results": []})
+        
     except Exception as e:
         logging.exception("Errore Gemini")
         return jsonify({"results": []}), 500
 
+
+def extract_json(text):
+    if not text: return None
+    t = text.strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t, flags=re.S).strip()
+    try:
+        return json.loads(t)
+    except:
+        return None
+
+
 @app.route("/")
 def home():
-    return jsonify({"status": "ok", "model": MODEL_NAME})
+    return jsonify({
+        "status": "ok", 
+        "current_model": str(current_model.model_name),
+        "available_models": list(AVAILABLE_MODELS.keys())
+    })
+
 
 if __name__ == "__main__":
     app.run(port=8080, debug=True)
