@@ -4,17 +4,24 @@ const SESSION_COOKIE="__Host-futorion_session";
 const SESSION_TTL_MS=1000*60*60*6;
 const BODY_MAX=65536;
 const RATE_WINDOW_MS=60*1000;
-const RATE_LIMIT=12;
+const RATE_LIMIT=20;
 const FAIL_WINDOW_MS=15*60*1000;
-const FAIL_LIMIT=8;
+const FAIL_LIMIT=10;
 const BASE_DELAY_MS=400;
 const MAX_DELAY_MS=5000;
 const ipState=new Map();
+
 const AVAILABLE_MODELS={
   "gemini-2.5-flash":"models/gemini-2.5-flash",
   "gemini-3-flash":"models/gemini-3-flash",
   "gemma-3-27b":"models/gemma-3-27b"
 };
+
+function json(res,status,payload){
+  res.statusCode=status;
+  res.setHeader("Content-Type","application/json; charset=utf-8");
+  res.end(JSON.stringify(payload));
+}
 
 function setSecurityHeaders(res){
   res.setHeader("X-Frame-Options","DENY");
@@ -24,13 +31,21 @@ function setSecurityHeaders(res){
   res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
   res.setHeader("Pragma","no-cache");
   res.setHeader("Expires","0");
-  res.setHeader("Content-Security-Policy","default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
 }
 
-function json(res,status,payload){
-  res.statusCode=status;
-  res.setHeader("Content-Type","application/json; charset=utf-8");
-  res.end(JSON.stringify(payload));
+function setCorsHeaders(req,res){
+  const requestOrigin=String(req.headers.origin||"");
+  const allowedOrigin=String(process.env.FUTORION_ORIGIN||"https://www.alexsjsju.eu");
+  if(requestOrigin&&requestOrigin===allowedOrigin){
+    res.setHeader("Access-Control-Allow-Origin",allowedOrigin);
+    res.setHeader("Vary","Origin");
+    res.setHeader("Access-Control-Allow-Credentials","true");
+    res.setHeader("Access-Control-Allow-Methods","GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers","Content-Type, Accept");
+    res.setHeader("Access-Control-Max-Age","86400");
+    return true;
+  }
+  return false;
 }
 
 function getClientIp(req){
@@ -88,7 +103,13 @@ function signPayload(payload,secret){
 
 function makeSessionToken(secret,ip){
   const now=Date.now();
-  const payloadObj={sub:"futorion",iat:now,exp:now+SESSION_TTL_MS,nonce:crypto.randomBytes(16).toString("hex"),iph:crypto.createHash("sha256").update(ip).digest("hex")};
+  const payloadObj={
+    sub:"futorion",
+    iat:now,
+    exp:now+SESSION_TTL_MS,
+    nonce:crypto.randomBytes(16).toString("hex"),
+    iph:crypto.createHash("sha256").update(ip).digest("hex")
+  };
   const payload=b64urlEncode(JSON.stringify(payloadObj));
   const sig=signPayload(payload,secret);
   return `${payload}.${sig}`;
@@ -231,22 +252,36 @@ Titoli max 4 parole. Descrizioni 2-4 frasi realistiche. Puoi generare da 2 a 10 
 
 module.exports=async function handler(req,res){
   setSecurityHeaders(res);
+  const corsAllowed=setCorsHeaders(req,res);
+
+  if(req.method==="OPTIONS"){
+    if(!corsAllowed){
+      return json(res,403,{error:"Origin non consentita"});
+    }
+    res.statusCode=204;
+    return res.end();
+  }
+
   const secret=deriveSecret();
   if(!secret){
     return json(res,500,{error:"Server non configurato"});
   }
+
   const ip=getClientIp(req);
   const state=getState(ip);
   state.requests.push(Date.now());
+
   if(shouldRateLimit(state)){
     res.setHeader("Retry-After","60");
     return json(res,429,{error:"Troppi tentativi, riprova dopo"});
   }
+
   if(req.method==="POST"){
     const ctype=String(req.headers["content-type"]||"").toLowerCase();
     if(!ctype.startsWith("application/json")){
       return json(res,415,{error:"Content-Type non supportato"});
     }
+
     let bodyText="";
     try{
       bodyText=await readBody(req,BODY_MAX);
@@ -254,12 +289,14 @@ module.exports=async function handler(req,res){
       if(e.message==="too_large")return json(res,413,{error:"Payload troppo grande"});
       return json(res,400,{error:"Body non valido"});
     }
+
     let body;
     try{
       body=JSON.parse(bodyText||"{}");
     }catch(e){
       return json(res,400,{error:"JSON non valido"});
     }
+
     if(body&&body.action==="predict"){
       const cookies=parseCookies(req);
       const token=cookies[SESSION_COOKIE];
@@ -270,10 +307,12 @@ module.exports=async function handler(req,res){
       const out=await generatePredict(body);
       return json(res,out.status,out.payload);
     }
+
     const password=typeof body.password==="string"?body.password.trim():"";
     if(password.length<4||password.length>256){
       return json(res,400,{error:"Password non valida"});
     }
+
     const expected=String(process.env.PPS_FUTORION||"");
     const ok=expected&&safeEqualText(password,expected);
     if(!ok){
@@ -283,29 +322,46 @@ module.exports=async function handler(req,res){
       await wait(delay);
       return json(res,401,{error:"Credenziali errate"});
     }
+
     state.fails=[];
     const token=makeSessionToken(secret,ip);
-    const cookieParts=[`${SESSION_COOKIE}=${token}`,"Path=/","HttpOnly","Secure","SameSite=Strict",`Max-Age=${Math.floor(SESSION_TTL_MS/1000)}`];
+    const cookieParts=[
+      `${SESSION_COOKIE}=${token}`,
+      "Path=/",
+      "HttpOnly",
+      "Secure",
+      "SameSite=None",
+      `Max-Age=${Math.floor(SESSION_TTL_MS/1000)}`
+    ];
     res.setHeader("Set-Cookie",cookieParts.join("; "));
     return json(res,200,{ok:true});
   }
+
   if(req.method==="GET"){
     const u=new URL(req.url||"/",`https://${req.headers.host||"localhost"}`);
+
     if(u.searchParams.get("action")==="status"){
-      return json(res,200,{status:"ok",current_model:"gemini-2.5-flash",available_models:Object.keys(AVAILABLE_MODELS)});
+      return json(res,200,{
+        status:"ok",
+        current_model:"gemini-2.5-flash",
+        available_models:Object.keys(AVAILABLE_MODELS)
+      });
     }
+
     const cookies=parseCookies(req);
     const token=cookies[SESSION_COOKIE];
     const valid=verifySession(token,secret,ip);
     if(!valid){
       return json(res,401,{error:"Sessione non valida"});
     }
+
     const content=String(process.env.CODEX_FUTORION||"");
     if(!content){
       return json(res,500,{error:"Contenuto non configurato"});
     }
     return json(res,200,{content});
   }
-  res.setHeader("Allow","GET, POST");
+
+  res.setHeader("Allow","GET, POST, OPTIONS");
   return json(res,405,{error:"Metodo non consentito"});
 };
