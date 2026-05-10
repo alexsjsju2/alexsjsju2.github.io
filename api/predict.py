@@ -33,11 +33,17 @@ function setSecurityHeaders(res){
   res.setHeader("Expires","0");
 }
 
+function parseAllowedOrigins(){
+  const fromEnv=String(process.env.FUTORION_ORIGIN||"").split(",").map(v=>v.trim()).filter(Boolean);
+  if(fromEnv.length>0)return new Set(fromEnv);
+  return new Set(["https://www.alexsjsju.eu","https://alexsjsju.eu","http://localhost:3000"]);
+}
+
 function setCorsHeaders(req,res){
-  const requestOrigin=String(req.headers.origin||"");
-  const allowedOrigin=String(process.env.FUTORION_ORIGIN||"https://www.alexsjsju.eu");
-  if(requestOrigin&&requestOrigin===allowedOrigin){
-    res.setHeader("Access-Control-Allow-Origin",allowedOrigin);
+  const origin=String(req.headers.origin||"");
+  const allowed=parseAllowedOrigins();
+  if(origin&&allowed.has(origin)){
+    res.setHeader("Access-Control-Allow-Origin",origin);
     res.setHeader("Vary","Origin");
     res.setHeader("Access-Control-Allow-Credentials","true");
     res.setHeader("Access-Control-Allow-Methods","GET, POST, OPTIONS");
@@ -195,15 +201,14 @@ function extractJson(text){
 
 async function generatePredict(body){
   const apiKey=String(process.env.GEMINI_API_KEY||"");
-  if(!apiKey){
-    return {status:500,payload:{results:[]}};
-  }
+  if(!apiKey)return {status:500,payload:{results:[]}};
+
   const history=normalizeHistory(body.history);
   const comments=normalizeComments(body.comments);
   const selected=sanitizeText(body.selected,500);
   const requestedModel=sanitizeText(body.model,80);
   const modelPath=AVAILABLE_MODELS[requestedModel]||AVAILABLE_MODELS["gemini-2.5-flash"];
-  const context=history.join(" → ");
+  const context=history.join(" -> ");
   const commentsText=comments.join(" | ");
   const prompt=`Sei un sistema di previsione del futuro estremamente preciso.
 
@@ -218,29 +223,25 @@ ${commentsText}
 
 ISTRUZIONI:
 1. Valuta se hai abbastanza dettagli (chi, cosa, quando, dove, contesto, rischi).
-2. Se i dati sono troppo vaghi → restituisci SOLO JSON con domande:
+2. Se i dati sono troppo vaghi restituisci SOLO JSON con domande:
 {
   "questions": ["Domanda specifica 1?", "Domanda specifica 2?"],
-  "message": "Per una previsione più accurata rispondi a queste domande"
+  "message": "Per una previsione piu accurata rispondi a queste domande"
 }
-
-3. Altrimenti genera fino a 8-10 futuri realistici (non limitarti a 3) usando logica quantistica (molti mondi / rami possibili) e rispondi SOLO con:
+3. Altrimenti genera da 2 a 10 futuri realistici e rispondi SOLO con:
 {
   "results": [
-    {"title": "...", "description": "...", "probability": 0}
+    {"title":"...","description":"...","probability":0}
   ]
-}
+}`;
 
-Titoli max 4 parole. Descrizioni 2-4 frasi realistiche. Puoi generare da 2 a 10 rami in base alla complessità.`;
   try{
     const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/${modelPath}:generateContent?key=${encodeURIComponent(apiKey)}`,{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})
     });
-    if(!r.ok){
-      return {status:500,payload:{results:[]}};
-    }
+    if(!r.ok)return {status:500,payload:{results:[]}};
     const raw=await r.json();
     const text=((raw?.candidates||[])[0]?.content?.parts||[]).map(p=>String(p?.text||"")).join("\n").trim();
     const parsed=extractJson(text);
@@ -252,25 +253,20 @@ Titoli max 4 parole. Descrizioni 2-4 frasi realistiche. Puoi generare da 2 a 10 
 
 module.exports=async function handler(req,res){
   setSecurityHeaders(res);
-  const corsAllowed=setCorsHeaders(req,res);
+  const corsOk=setCorsHeaders(req,res);
 
   if(req.method==="OPTIONS"){
-    if(!corsAllowed){
-      return json(res,403,{error:"Origin non consentita"});
-    }
+    if(!corsOk)return json(res,403,{error:"Origin non consentita"});
     res.statusCode=204;
     return res.end();
   }
 
   const secret=deriveSecret();
-  if(!secret){
-    return json(res,500,{error:"Server non configurato"});
-  }
+  if(!secret)return json(res,500,{error:"Server non configurato"});
 
   const ip=getClientIp(req);
   const state=getState(ip);
   state.requests.push(Date.now());
-
   if(shouldRateLimit(state)){
     res.setHeader("Retry-After","60");
     return json(res,429,{error:"Troppi tentativi, riprova dopo"});
@@ -278,9 +274,7 @@ module.exports=async function handler(req,res){
 
   if(req.method==="POST"){
     const ctype=String(req.headers["content-type"]||"").toLowerCase();
-    if(!ctype.startsWith("application/json")){
-      return json(res,415,{error:"Content-Type non supportato"});
-    }
+    if(!ctype.startsWith("application/json"))return json(res,415,{error:"Content-Type non supportato"});
 
     let bodyText="";
     try{
@@ -300,18 +294,13 @@ module.exports=async function handler(req,res){
     if(body&&body.action==="predict"){
       const cookies=parseCookies(req);
       const token=cookies[SESSION_COOKIE];
-      const valid=verifySession(token,secret,ip);
-      if(!valid){
-        return json(res,401,{error:"Sessione non valida"});
-      }
+      if(!verifySession(token,secret,ip))return json(res,401,{error:"Sessione non valida"});
       const out=await generatePredict(body);
       return json(res,out.status,out.payload);
     }
 
     const password=typeof body.password==="string"?body.password.trim():"";
-    if(password.length<4||password.length>256){
-      return json(res,400,{error:"Password non valida"});
-    }
+    if(password.length<4||password.length>256)return json(res,400,{error:"Password non valida"});
 
     const expected=String(process.env.PPS_FUTORION||"");
     const ok=expected&&safeEqualText(password,expected);
@@ -325,14 +314,7 @@ module.exports=async function handler(req,res){
 
     state.fails=[];
     const token=makeSessionToken(secret,ip);
-    const cookieParts=[
-      `${SESSION_COOKIE}=${token}`,
-      "Path=/",
-      "HttpOnly",
-      "Secure",
-      "SameSite=None",
-      `Max-Age=${Math.floor(SESSION_TTL_MS/1000)}`
-    ];
+    const cookieParts=[`${SESSION_COOKIE}=${token}`,"Path=/","HttpOnly","Secure","SameSite=None",`Max-Age=${Math.floor(SESSION_TTL_MS/1000)}`];
     res.setHeader("Set-Cookie",cookieParts.join("; "));
     return json(res,200,{ok:true});
   }
@@ -341,24 +323,15 @@ module.exports=async function handler(req,res){
     const u=new URL(req.url||"/",`https://${req.headers.host||"localhost"}`);
 
     if(u.searchParams.get("action")==="status"){
-      return json(res,200,{
-        status:"ok",
-        current_model:"gemini-2.5-flash",
-        available_models:Object.keys(AVAILABLE_MODELS)
-      });
+      return json(res,200,{status:"ok",available_models:Object.keys(AVAILABLE_MODELS)});
     }
 
     const cookies=parseCookies(req);
     const token=cookies[SESSION_COOKIE];
-    const valid=verifySession(token,secret,ip);
-    if(!valid){
-      return json(res,401,{error:"Sessione non valida"});
-    }
+    if(!verifySession(token,secret,ip))return json(res,401,{error:"Sessione non valida"});
 
     const content=String(process.env.CODEX_FUTORION||"");
-    if(!content){
-      return json(res,500,{error:"Contenuto non configurato"});
-    }
+    if(!content)return json(res,500,{error:"Contenuto non configurato"});
     return json(res,200,{content});
   }
 
