@@ -23,7 +23,7 @@ function json(res,status,payload){
   res.end(JSON.stringify(payload));
 }
 
-function setSecurityHeaders(res){
+function setBaseSecurityHeaders(res){
   res.setHeader("X-Frame-Options","DENY");
   res.setHeader("X-Content-Type-Options","nosniff");
   res.setHeader("Referrer-Policy","no-referrer");
@@ -33,25 +33,26 @@ function setSecurityHeaders(res){
   res.setHeader("Expires","0");
 }
 
-function parseAllowedOrigins(){
-  const fromEnv=String(process.env.FUTORION_ORIGIN||"").split(",").map(v=>v.trim()).filter(Boolean);
-  if(fromEnv.length>0)return new Set(fromEnv);
-  return new Set(["https://www.alexsjsju.eu","https://alexsjsju.eu","https://apisecurity-iota.vercel.app"]);
-}
-
 function setCorsHeaders(req,res){
   const origin=String(req.headers.origin||"");
-  const allowed=parseAllowedOrigins();
+  const allowed=new Set(
+    String(process.env.FUTORION_ORIGIN||"https://www.alexsjsju.eu,https://alexsjsju.eu,http://localhost:3000")
+      .split(",")
+      .map(v=>v.trim())
+      .filter(Boolean)
+  );
+
   if(origin&&allowed.has(origin)){
     res.setHeader("Access-Control-Allow-Origin",origin);
     res.setHeader("Vary","Origin");
     res.setHeader("Access-Control-Allow-Credentials","true");
-    res.setHeader("Access-Control-Allow-Methods","GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers","Content-Type, Accept");
-    res.setHeader("Access-Control-Max-Age","86400");
-    return true;
+  }else{
+    res.setHeader("Access-Control-Allow-Origin","https://www.alexsjsju.eu");
   }
-  return false;
+
+  res.setHeader("Access-Control-Allow-Methods","GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers","Content-Type, Accept, Authorization, Cache-Control, Pragma");
+  res.setHeader("Access-Control-Max-Age","86400");
 }
 
 function getClientIp(req){
@@ -192,17 +193,12 @@ function extractJson(text){
   if(t.startsWith("```")){
     t=t.replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/,"").trim();
   }
-  try{
-    return JSON.parse(t);
-  }catch(e){
-    return null;
-  }
+  try{return JSON.parse(t);}catch(e){return null;}
 }
 
 async function generatePredict(body){
   const apiKey=String(process.env.GEMINI_API_KEY||"");
   if(!apiKey)return {status:500,payload:{results:[]}};
-
   const history=normalizeHistory(body.history);
   const comments=normalizeComments(body.comments);
   const selected=sanitizeText(body.selected,500);
@@ -234,7 +230,6 @@ ISTRUZIONI:
     {"title":"...","description":"...","probability":0}
   ]
 }`;
-
   try{
     const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/${modelPath}:generateContent?key=${encodeURIComponent(apiKey)}`,{
       method:"POST",
@@ -252,12 +247,11 @@ ISTRUZIONI:
 }
 
 module.exports=async function handler(req,res){
-  setSecurityHeaders(res);
-  const corsOk=setCorsHeaders(req,res);
+  setBaseSecurityHeaders(res);
+  setCorsHeaders(req,res);
 
   if(req.method==="OPTIONS"){
-    if(!corsOk)return json(res,403,{error:"Origin non consentita"});
-    res.statusCode=204;
+    res.statusCode=200;
     return res.end();
   }
 
@@ -277,23 +271,18 @@ module.exports=async function handler(req,res){
     if(!ctype.startsWith("application/json"))return json(res,415,{error:"Content-Type non supportato"});
 
     let bodyText="";
-    try{
-      bodyText=await readBody(req,BODY_MAX);
-    }catch(e){
+    try{bodyText=await readBody(req,BODY_MAX);}
+    catch(e){
       if(e.message==="too_large")return json(res,413,{error:"Payload troppo grande"});
       return json(res,400,{error:"Body non valido"});
     }
 
     let body;
-    try{
-      body=JSON.parse(bodyText||"{}");
-    }catch(e){
-      return json(res,400,{error:"JSON non valido"});
-    }
+    try{body=JSON.parse(bodyText||"{}");}
+    catch(e){return json(res,400,{error:"JSON non valido"});}
 
     if(body&&body.action==="predict"){
-      const cookies=parseCookies(req);
-      const token=cookies[SESSION_COOKIE];
+      const token=parseCookies(req)[SESSION_COOKIE];
       if(!verifySession(token,secret,ip))return json(res,401,{error:"Sessione non valida"});
       const out=await generatePredict(body);
       return json(res,out.status,out.payload);
@@ -314,20 +303,24 @@ module.exports=async function handler(req,res){
 
     state.fails=[];
     const token=makeSessionToken(secret,ip);
-    const cookieParts=[`${SESSION_COOKIE}=${token}`,"Path=/","HttpOnly","Secure","SameSite=None",`Max-Age=${Math.floor(SESSION_TTL_MS/1000)}`];
-    res.setHeader("Set-Cookie",cookieParts.join("; "));
+    res.setHeader("Set-Cookie",[
+      `${SESSION_COOKIE}=${token}`,
+      "Path=/",
+      "HttpOnly",
+      "Secure",
+      "SameSite=None",
+      `Max-Age=${Math.floor(SESSION_TTL_MS/1000)}`
+    ].join("; "));
     return json(res,200,{ok:true});
   }
 
   if(req.method==="GET"){
     const u=new URL(req.url||"/",`https://${req.headers.host||"localhost"}`);
-
     if(u.searchParams.get("action")==="status"){
       return json(res,200,{status:"ok",available_models:Object.keys(AVAILABLE_MODELS)});
     }
 
-    const cookies=parseCookies(req);
-    const token=cookies[SESSION_COOKIE];
+    const token=parseCookies(req)[SESSION_COOKIE];
     if(!verifySession(token,secret,ip))return json(res,401,{error:"Sessione non valida"});
 
     const content=String(process.env.CODEX_FUTORION||"");
