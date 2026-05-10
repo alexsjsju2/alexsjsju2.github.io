@@ -36,7 +36,7 @@ function setSecurityHeaders(res){
 function parseAllowedOrigins(){
   const fromEnv=String(process.env.FUTORION_ORIGIN||"").split(",").map(v=>v.trim()).filter(Boolean);
   if(fromEnv.length>0)return new Set(fromEnv);
-  return new Set(["https://www.alexsjsju.eu","https://alexsjsju.eu"]);
+  return new Set(["https://www.alexsjsju.eu","https://alexsjsju.eu","https://apisecurity-iota.vercel.app"]);
 }
 
 function setCorsHeaders(req,res){
