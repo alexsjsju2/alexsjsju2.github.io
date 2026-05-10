@@ -36,7 +36,7 @@ function setSecurityHeaders(res){
 function parseAllowedOrigins(){
   const fromEnv=String(process.env.FUTORION_ORIGIN||"").split(",").map(v=>v.trim()).filter(Boolean);
   if(fromEnv.length>0)return new Set(fromEnv);
-  return new Set(["https://www.alexsjsju.eu","https://alexsjsju.eu","http://localhost:3000"]);
+  return new Set(["https://www.alexsjsju.eu","https://alexsjsju.eu"]);
 }
 
 function setCorsHeaders(req,res){
