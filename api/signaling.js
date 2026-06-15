@@ -13,7 +13,6 @@ try {
 } catch (error) {
   console.error("Errore di inizializzazione Firebase:", error);
 }
-
 function getIceServers() {
   try {
     if (process.env.SCALL_CRED) {
@@ -27,7 +26,7 @@ function getIceServers() {
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', 'https://www.alexsjsju.eu');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS, GET');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
@@ -61,7 +60,6 @@ export default async function handler(req, res) {
             pcActive: data.active,
             lastUpdate: admin.firestore.FieldValue.serverTimestamp()
           }, { merge: true });
-          
           if (!data.active) {
             const batch = db.batch();
             const signalsSnapshot = await db.collection('webrtc_signals').get();
@@ -76,43 +74,10 @@ export default async function handler(req, res) {
         case 'send_signal': {
           if (!targetId || !data) return res.status(400).json({ error: 'Parametri mancanti per send_signal' });
           
-          const docRef = db.collection('webrtc_signals').doc(targetId);
-          
-          if (data.iceCandidate) {
-            const fieldName = data.sender === 'pc' ? 'iceCandidatesPC' : 'iceCandidatesMobile';
-            await docRef.update({
-              [fieldName]: admin.firestore.FieldValue.arrayUnion(data.iceCandidate)
-            }).catch(async (err) => {
-              if (err.code === 5 || err.message.includes('NOT_FOUND')) {
-                await docRef.set({
-                  offer: null,
-                  answer: null,
-                  iceCandidatesMobile: data.sender === 'mobile' ? [data.iceCandidate] : [],
-                  iceCandidatesPC: data.sender === 'pc' ? [data.iceCandidate] : [],
-                  timestamp: admin.firestore.FieldValue.serverTimestamp()
-                });
-              } else {
-                throw err;
-              }
-            });
-          } else if (data.type === 'offer') {
-            await docRef.set({
-              offer: data.sdp,
-              answer: null,
-              iceCandidatesMobile: [],
-              iceCandidatesPC: [],
-              timestamp: admin.firestore.FieldValue.serverTimestamp()
-            }, { merge: true });
-          } else if (data.type === 'answer') {
-            await docRef.set({
-              answer: data.sdp
-            }, { merge: true });
-          } else {
-            await docRef.set({
-              ...data,
-              timestamp: admin.firestore.FieldValue.serverTimestamp()
-            }, { merge: true });
-          }
+          await db.collection('webrtc_signals').doc(targetId).set({
+            ...data,
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
+          });
           
           return res.status(200).json({ success: true });
         }
