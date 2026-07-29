@@ -35,7 +35,7 @@ export default async function handler(req, res) {
                 leaders.push({
                     name: data.name,
                     score: data.score,
-                    mode: data.mode
+                    mode: data.mode || 'Misto'
                 });
             });
             
@@ -46,26 +46,35 @@ export default async function handler(req, res) {
             const { name, score, mode } = req.body;
 
             if (!name || typeof name !== 'string' || name.length > 20 || name.length < 3) {
-                return res.status(400).json({ error: "Nome invalido o malevolo" });
+                return res.status(400).json({ error: "Nome invalido" });
             }
             
             if (typeof score !== 'number' || score < 0 || score > 100000) {
-                return res.status(400).json({ error: "Punteggio manomesso rilevato" });
+                return res.status(400).json({ error: "Punteggio invalido" });
             }
-            
-            const allowedModes = ['classico', 'tempo', 'vite', 'associazione', 'allenamento'];
-            if (!allowedModes.includes(mode)) {
-                return res.status(400).json({ error: "Modalità sconosciuta" });
-            }
-            const sanitizedName = name.replace(/[^a-zA-Z0-9_]/g, '');
-            await db.collection('leaderboard').add({
-                name: sanitizedName,
-                score: parseInt(score),
-                mode: mode,
-                timestamp: admin.firestore.FieldValue.serverTimestamp()
-            });
 
-            return res.status(201).json({ message: "Score salvato in sicurezza!" });
+            const sanitizedName = name.replace(/[^a-zA-Z0-9_]/g, '');
+
+            const userRef = db.collection('leaderboard').doc(sanitizedName);
+            const userDoc = await userRef.get();
+
+            if (userDoc.exists) {
+                const currentScore = userDoc.data().score || 0;
+                await userRef.update({
+                    score: currentScore + parseInt(score),
+                    mode: mode,
+                    lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+                });
+            } else {
+                await userRef.set({
+                    name: sanitizedName,
+                    score: parseInt(score),
+                    mode: mode,
+                    lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+                });
+            }
+
+            return res.status(200).json({ message: "Punteggio aggiornato con successo!" });
         }
         
         return res.status(405).json({ error: "Metodo non consentito" });
