@@ -1,4 +1,5 @@
 const admin = require('firebase-admin');
+const crypto = require('crypto');
 
 if (!admin.apps.length) {
     try {
@@ -12,159 +13,105 @@ if (!admin.apps.length) {
 }
 
 const db = admin.firestore();
+const hash = str => crypto.createHash('sha256').update(String(str)).digest('hex');
 
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', 'https://www.alexsjsju.eu');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
+    if (req.method === 'OPTIONS') return res.status(200).end();
 
     try {
         if (req.method === 'GET') {
-            const snapshot = await db.collection('leaderboard')
-                .orderBy('score', 'desc')
-                .limit(10)
-                .get();
-                
+            const snapshot = await db.collection('leaderboard').orderBy('score', 'desc').limit(10).get();
             const leaders = [];
             snapshot.forEach(doc => {
                 const data = doc.data();
-                leaders.push({
-                    name: data.name,
-                    score: data.score,
-                    mode: data.mode || 'Misto'
-                });
+                leaders.push({ name: data.name, score: data.score || 0, mode: data.mode || 'Misto' });
             });
-            
             return res.status(200).json(leaders);
-        } 
-        
-        else if (req.method === 'POST') {
-            const { action, name, passwordHash, score, mode, token, newName, newPasswordHash } = req.body;
+        }
+
+        if (req.method === 'POST') {
+            const { action, name, password, secretKey, score, mode, newName, newPassword } = req.body;
+
+            if (action === 'register') {
+                if (!name || name.length < 3 || name.length > 20 || !password || password.length < 4) {
+                    return res.status(400).json({ error: "Nome (3-20 car.) o Password (min 4 car.) non validi" });
+                }
+                const cleanName = name.replace(/[^a-zA-Z0-9_]/g, '');
+                const ref = db.collection('leaderboard').doc(cleanName);
+                if ((await ref.get()).exists) return res.status(400).json({ error: "Nome utente già esistente" });
+
+                const generatedSecret = crypto.randomBytes(12).toString('hex');
+                await ref.set({
+                    name: cleanName,
+                    password: hash(password),
+                    secretKey: hash(generatedSecret),
+                    score: 0,
+                    mode: 'Misto',
+                    lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+                });
+                return res.status(200).json({ secretKey: generatedSecret, name: cleanName, score: 0 });
+            }
 
             if (action === 'login') {
-                if (!name || !passwordHash) {
-                    return res.status(400).json({ error: "Nome e Password obbligatori" });
+                const cleanName = (name || '').replace(/[^a-zA-Z0-9_]/g, '');
+                const ref = db.collection('leaderboard').doc(cleanName);
+                const doc = await ref.get();
+                if (!doc.exists) return res.status(404).json({ error: "Utente non trovato" });
+                const data = doc.data();
+                if (data.password !== hash(password)) return res.status(401).json({ error: "Password errata" });
+                return res.status(200).json({ name: data.name, score: data.score || 0 });
+            }
+
+            if (action === 'update') {
+                if (!secretKey) return res.status(400).json({ error: "Chiave segreta richiesta" });
+                const snap = await db.collection('leaderboard').where('secretKey', '==', hash(secretKey)).limit(1).get();
+                if (snap.empty) return res.status(401).json({ error: "Chiave segreta non valida" });
+
+                const userDoc = snap.docs[0];
+                const oldData = userDoc.data();
+                const updates = {};
+
+                if (newPassword && newPassword.length >= 4) updates.password = hash(newPassword);
+
+                if (newName && newName !== oldData.name) {
+                    const cleanNewName = newName.replace(/[^a-zA-Z0-9_]/g, '');
+                    if (cleanNewName.length < 3 || cleanNewName.length > 20) return res.status(400).json({ error: "Nuovo nome non valido" });
+                    const checkRef = db.collection('leaderboard').doc(cleanNewName);
+                    if ((await checkRef.get()).exists) return res.status(400).json({ error: "Nome già in uso" });
+
+                    await checkRef.set({ ...oldData, ...updates, name: cleanNewName });
+                    await userDoc.ref.delete();
+                    return res.status(200).json({ message: "Dati aggiornati!", newName: cleanNewName });
                 }
 
-                const sanitizedName = name.replace(/[^a-zA-Z0-9_]/g, '');
-                const userRef = db.collection('leaderboard').doc(sanitizedName);
-                const userDoc = await userRef.get();
+                if (Object.keys(updates).length > 0) await userDoc.ref.update(updates);
+                return res.status(200).json({ message: "Dati aggiornati!", newName: oldData.name });
+            }
 
+            if (action === 'score' || score !== undefined) {
+                const cleanName = (name || '').replace(/[^a-zA-Z0-9_]/g, '');
+                const userRef = db.collection('leaderboard').doc(cleanName);
+                const userDoc = await userRef.get();
                 if (userDoc.exists) {
-                    const userData = userDoc.data();
-                    if (userData.passwordHash !== passwordHash) {
-                        return res.status(401).json({ error: "Password errata!" });
-                    }
-                    return res.status(200).json({ 
-                        message: "Login effettuato!", 
-                        token: userData.token,
-                        score: userData.score || 0
+                    const currentScore = userDoc.data().score || 0;
+                    await userRef.update({
+                        score: currentScore + parseInt(score),
+                        mode: mode || 'Misto',
+                        lastUpdated: admin.firestore.FieldValue.serverTimestamp()
                     });
-                } else {
-                    const crypto = require('crypto');
-                    const newToken = crypto.randomUUID();
-
-                    await userRef.set({
-                        name: sanitizedName,
-                        passwordHash: passwordHash,
-                        token: newToken,
-                        score: 0,
-                        mode: mode || 'Classico',
-                        createdAt: admin.firestore.FieldValue.serverTimestamp()
-                    });
-
-                    return res.status(201).json({ 
-                        message: "Utente registrato!", 
-                        token: newToken,
-                        isNew: true
-                    });
+                    return res.status(200).json({ message: "Punteggio aggiornato" });
                 }
+                return res.status(404).json({ error: "Utente non trovato" });
             }
 
-            else if (action === 'update_profile') {
-                if (!token) return res.status(400).json({ error: "Token segreto mancante" });
-
-                const snapshot = await db.collection('leaderboard').where('token', '==', token).get();
-                
-                if (snapshot.empty) {
-                    return res.status(403).json({ error: "Token segreto non valido!" });
-                }
-
-                const userDoc = snapshot.docs[0];
-                const oldSanitizedName = userDoc.id;
-                const userData = userDoc.data();
-
-                let updates = {
-                    lastUpdated: admin.firestore.FieldValue.serverTimestamp()
-                };
-
-                if (newPasswordHash) {
-                    updates.passwordHash = newPasswordHash;
-                }
-
-                if (newName && newName !== oldSanitizedName) {
-                    const sanitizedNewName = newName.replace(/[^a-zA-Z0-9_]/g, '');
-                    const newDocRef = db.collection('leaderboard').doc(sanitizedNewName);
-                    const checkExists = await newDocRef.get();
-
-                    if (checkExists.exists) {
-                        return res.status(400).json({ error: "Il nuovo nome utente è già occupato!" });
-                    }
-
-                    await newDocRef.set({
-                        ...userData,
-                        ...updates,
-                        name: sanitizedNewName
-                    });
-
-                    await db.collection('leaderboard').doc(oldSanitizedName).delete();
-
-                    return res.status(200).json({ message: "Profilo e Nome aggiornati con successo!" });
-                }
-
-                await userDoc.ref.update(updates);
-                return res.status(200).json({ message: "Password aggiornata con successo!" });
-            }
-
-            else {
-                if (!name || typeof name !== 'string' || name.length > 20 || name.length < 3) {
-                    return res.status(400).json({ error: "Nome invalido" });
-                }
-                
-                if (typeof score !== 'number' || score < 0 || score > 100000) {
-                    return res.status(400).json({ error: "Punteggio invalido" });
-                }
-
-                const sanitizedName = name.replace(/[^a-zA-Z0-9_]/g, '');
-                const userRef = db.collection('leaderboard').doc(sanitizedName);
-                const userDoc = await userRef.get();
-
-                if (!userDoc.exists) {
-                    return res.status(404).json({ error: "Utente non trovato" });
-                }
-
-                const userData = userDoc.data();
-                if (passwordHash && userData.passwordHash !== passwordHash) {
-                    return res.status(401).json({ error: "Autenticazione fallita" });
-                }
-
-                const currentScore = userData.score || 0;
-                await userRef.update({
-                    score: currentScore + parseInt(score),
-                    mode: mode || 'Misto',
-                    lastUpdated: admin.firestore.FieldValue.serverTimestamp()
-                });
-
-                return res.status(200).json({ message: "Punteggio aggiornato con successo!" });
-            }
+            return res.status(400).json({ error: "Azione non valida" });
         }
-        
+
         return res.status(405).json({ error: "Metodo non consentito" });
-        
     } catch (error) {
         console.error(error);
         return res.status(500).json({ error: "Errore interno del server" });
