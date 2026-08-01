@@ -72,16 +72,28 @@ export default async function handler(req, res) {
         }
 
         if (action === 'verify') {
-            const { target } = req.body;
-            if (!target) return res.status(400).json({ error: "Destinatario mancante" });
-            
-            const cleanTarget = String(target).replace(/[^0-9]/g, '');
-            const targetDoc = await db.collection('numbers').doc(cleanTarget).get();
-            
-            if (!targetDoc.exists) {
-                return res.status(404).json({ error: "Numero inesistente" });
+            try {
+                const { target } = req.body;
+                if (!target) {
+                    return res.status(400).json({ error: "Destinatario mancante" });
+                }
+                
+                const cleanTarget = String(target).replace(/[^0-9]/g, '');
+                if (cleanTarget.length === 0) {
+                    return res.status(400).json({ error: "Numero non valido" });
+                }
+
+                const targetDoc = await db.collection('numbers').doc(cleanTarget).get();
+                
+                if (!targetDoc.exists) {
+                    return res.status(404).json({ error: "Numero inesistente" });
+                }
+                
+                return res.status(200).json({ success: true });
+            } catch (verifyError) {
+                console.error("Verify Error details:", verifyError);
+                return res.status(500).json({ error: "Errore interno durante la verifica" });
             }
-            return res.status(200).json({ success: true });
         }
 
 
