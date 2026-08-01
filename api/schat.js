@@ -32,7 +32,7 @@ export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: "Method Not Allowed" });
 
     try {
-        const { action, num, pass, to, data, ids } = req.body;
+        const { action, num, pass, to, data, ids, target } = req.body;
 
         if (!num || !pass || (typeof num !== 'string' && typeof num !== 'number') || (typeof pass !== 'string' && typeof pass !== 'number')) {
             return res.status(400).json({ error: "Credenziali mancanti o formato non valido" });
@@ -61,7 +61,12 @@ export default async function handler(req, res) {
         const userDoc = await userRef.get();
         if (!userDoc.exists) return res.status(404).json({ error: "Numero inesistente" });
 
-        const storedHash = userDoc.data().password;
+        const userData = userDoc.data();
+        if (!userData || !userData.password) {
+            return res.status(400).json({ error: "Dati utente non validi o password mancante" });
+        }
+
+        const storedHash = userData.password;
         const inputHash = hash(passStr);
         
         const storedBuffer = Buffer.from(storedHash, 'hex');
@@ -72,30 +77,19 @@ export default async function handler(req, res) {
         }
 
         if (action === 'verify') {
-            try {
-                const { target } = req.body;
-                if (!target) {
-                    return res.status(400).json({ error: "Destinatario mancante" });
-                }
-                
-                const cleanTarget = String(target).replace(/[^0-9]/g, '');
-                if (cleanTarget.length === 0) {
-                    return res.status(400).json({ error: "Numero non valido" });
-                }
-
-                const targetDoc = await db.collection('numbers').doc(cleanTarget).get();
-                
-                if (!targetDoc.exists) {
-                    return res.status(404).json({ error: "Numero inesistente" });
-                }
-                
-                return res.status(200).json({ success: true });
-            } catch (verifyError) {
-                console.error("Verify Error details:", verifyError);
-                return res.status(500).json({ error: "Errore interno durante la verifica" });
+            if (!target) return res.status(400).json({ error: "Destinatario mancante" });
+            
+            const cleanTarget = String(target).replace(/[^0-9]/g, '');
+            if (cleanTarget.length === 0 || cleanTarget.length > 20) {
+                return res.status(400).json({ error: "Destinatario non valido" });
             }
-        }
 
+            const targetDoc = await db.collection('numbers').doc(cleanTarget).get();
+            if (!targetDoc.exists) {
+                return res.status(404).json({ error: "Numero inesistente" });
+            }
+            return res.status(200).json({ success: true });
+        }
 
         if (action === 'send') {
             if (!to || !data) return res.status(400).json({ error: "Dati incompleti" });
