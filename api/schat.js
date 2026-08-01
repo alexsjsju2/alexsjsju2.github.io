@@ -1,153 +1,170 @@
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 
-export const config = {
-    api: {
-        bodyParser: {
-            sizeLimit: '1mb',
-        },
-    },
-};
-
 if (!admin.apps.length) {
     try {
-        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
         admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount)
+            credential: admin.credential.cert({
+                projectId: process.env.FIREBASE_PROJECT_ID,
+                clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+                privateKey: process.env.FIREBASE_PRIVATE_KEY ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n') : undefined
+            })
         });
-    } catch (error) {
-        console.error("Firebase init error:", error);
+    } catch (e) {
+        console.error('Firebase initialization error:', e);
     }
 }
 
 const db = admin.firestore();
-const hash = str => crypto.createHash('sha256').update(String(str)).digest('hex');
 
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', 'https://www.alexsjsju.eu');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-    if (req.method === 'OPTIONS') return res.status(200).end();
-    if (req.method !== 'POST') return res.status(405).json({ error: "Method Not Allowed" });
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
+
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed. Use POST.' });
+    }
+
+    const contentLength = req.headers['content-length'];
+    if (contentLength && parseInt(contentLength) > 1024 * 1024) {
+        return res.status(413).json({ error: 'Payload too large (max 1MB)' });
+    }
 
     try {
-        const { action, num, pass, to, data, ids, target } = req.body;
+        const { action, number, password, from, to, data, messageIds } = req.body || {};
 
-        if (!num || !pass || (typeof num !== 'string' && typeof num !== 'number') || (typeof pass !== 'string' && typeof pass !== 'number')) {
-            return res.status(400).json({ error: "Credenziali mancanti o formato non valido" });
+        if (!action) {
+            return res.status(400).json({ error: 'Missing action parameter' });
         }
 
-        const passStr = String(pass);
-        const cleanNum = String(num).replace(/[^0-9]/g, '');
-        
-        if (cleanNum.length === 0 || cleanNum.length > 20 || passStr.length < 4 || passStr.length > 100) {
-            return res.status(400).json({ error: "Credenziali non valide" });
-        }
+        const sanitizeNumber = (num) => String(num || '').replace(/[^0-9+]/g, '').trim();
 
-        const userRef = db.collection('numbers').doc(cleanNum);
-
-        if (action === 'register') {
-            const userDoc = await userRef.get();
-            if (userDoc.exists) return res.status(400).json({ error: "Numero già in uso" });
-            
-            await userRef.set({ 
-                password: hash(passStr), 
-                createdAt: admin.firestore.FieldValue.serverTimestamp() 
-            });
-            return res.status(200).json({ message: "Numero creato con successo" });
-        }
-
-        const userDoc = await userRef.get();
-        if (!userDoc.exists) return res.status(404).json({ error: "Numero inesistente" });
-
-        const userData = userDoc.data();
-        if (!userData || !userData.password) {
-            return res.status(400).json({ error: "Dati utente non validi o password mancante" });
-        }
-
-        const storedHash = userData.password;
-        const inputHash = hash(passStr);
-        
-        const storedBuffer = Buffer.from(storedHash, 'hex');
-        const inputBuffer = Buffer.from(inputHash, 'hex');
-
-        if (storedBuffer.length !== inputBuffer.length || !crypto.timingSafeEqual(storedBuffer, inputBuffer)) {
-            return res.status(401).json({ error: "Password errata" });
-        }
-
-        if (action === 'verify') {
-            if (!target) return res.status(400).json({ error: "Destinatario mancante" });
-            
-            const cleanTarget = String(target).replace(/[^0-9]/g, '');
-            if (cleanTarget.length === 0 || cleanTarget.length > 20) {
-                return res.status(400).json({ error: "Destinatario non valido" });
-            }
-
-            const targetDoc = await db.collection('numbers').doc(cleanTarget).get();
-            if (!targetDoc.exists) {
-                return res.status(404).json({ error: "Numero inesistente" });
-            }
-            return res.status(200).json({ success: true });
-        }
-
-        if (action === 'send') {
-            if (!to || !data) return res.status(400).json({ error: "Dati incompleti" });
-            
-            if (typeof data !== 'string' || data.length > 10000) return res.status(400).json({ error: "Dati non validi o troppo lunghi" });
-            
-            const cleanTo = String(to).replace(/[^0-9]/g, '');
-            if (cleanTo.length === 0 || cleanTo.length > 20) return res.status(400).json({ error: "Destinatario non valido" });
-            
-            await db.collection('messages').add({
-                from: cleanNum,
-                to: cleanTo,
-                data: data,
-                timestamp: admin.firestore.FieldValue.serverTimestamp()
-            });
-            return res.status(200).json({ success: true });
-        }
-
-        if (action === 'receive') {
-            const snap = await db.collection('messages')
-                .where('to', '==', cleanNum)
-                .orderBy('timestamp', 'desc')
-                .limit(100) 
-                .get();
-                
-            const messages = [];
-            snap.forEach(doc => {
-                const docData = doc.data();
-                messages.push({ id: doc.id, from: docData.from, data: docData.data });
-            });
-            return res.status(200).json({ messages });
-        }
-
-        if (action === 'delete') {
-            if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "Nessun ID fornito" });
-            
-            if (ids.length > 100) return res.status(400).json({ error: "Troppi ID da eliminare contemporaneamente" });
-
-            const validIds = ids.filter(id => typeof id === 'string' || typeof id === 'number');
-            if (validIds.length === 0) return res.status(400).json({ error: "ID malformati" });
-
-            const refs = validIds.map(id => db.collection('messages').doc(String(id)));
-            const docs = await db.getAll(...refs);
-            const batch = db.batch();
-            
-            docs.forEach(doc => {
-                if (doc.exists && doc.data().to === cleanNum) {
-                    batch.delete(doc.ref);
+        switch (action) {
+            case 'register': {
+                const cleanNum = sanitizeNumber(number);
+                if (!cleanNum || !password) {
+                    return res.status(400).json({ error: 'Numero o password non validi' });
                 }
-            });
-            
-            await batch.commit();
-            return res.status(200).json({ success: true });
-        }
 
-        return res.status(400).json({ error: "Azione non valida" });
-    } catch (error) {
-        console.error("API Error:", error); 
-        return res.status(500).json({ error: "Errore interno del server" });
+                const docRef = db.collection('numbers').doc(cleanNum);
+                const doc = await docRef.get();
+                if (doc.exists) {
+                    return res.status(409).json({ error: 'Il numero è già registrato' });
+                }
+
+                const hash = crypto.createHash('sha256').update(password).digest('hex');
+                await docRef.set({
+                    password: hash,
+                    createdAt: admin.firestore.FieldValue.serverTimestamp()
+                });
+
+                return res.status(200).json({ success: true, message: 'Account registrato con successo' });
+            }
+
+            case 'verify': {
+                const cleanNum = sanitizeNumber(number);
+                if (!cleanNum) {
+                    return res.status(400).json({ error: 'Numero non valido' });
+                }
+
+                const docRef = db.collection('numbers').doc(cleanNum);
+                const doc = await docRef.get();
+                if (!doc.exists) {
+                    return res.status(404).json({ error: 'Numero non trovato nel database' });
+                }
+
+                if (password) {
+                    const storedHash = doc.data().password;
+                    const inputHash = crypto.createHash('sha256').update(password).digest('hex');
+
+                    const bufStored = Buffer.from(storedHash, 'hex');
+                    const bufInput = Buffer.from(inputHash, 'hex');
+
+                    if (bufStored.length !== bufInput.length || !crypto.timingSafeEqual(bufStored, bufInput)) {
+                        return res.status(401).json({ error: 'Password errata' });
+                    }
+                }
+
+                return res.status(200).json({ success: true, exists: true });
+            }
+
+            case 'send': {
+                const cleanFrom = sanitizeNumber(from);
+                const cleanTo = sanitizeNumber(to);
+
+                if (!cleanFrom || !cleanTo || !data) {
+                    return res.status(400).json({ error: 'Campi del messaggio mancanti' });
+                }
+
+                if (typeof data !== 'string' || data.length > 500000) {
+                    return res.status(400).json({ error: 'Dimensione dati non valida' });
+                }
+
+                await db.collection('messages').add({
+                    from: cleanFrom,
+                    to: cleanTo,
+                    data: data,
+                    timestamp: admin.firestore.FieldValue.serverTimestamp()
+                });
+
+                return res.status(200).json({ success: true });
+            }
+
+            case 'receive': {
+                const cleanNum = sanitizeNumber(number);
+                if (!cleanNum) {
+                    return res.status(400).json({ error: 'Numero non valido' });
+                }
+
+                const snapshot = await db.collection('messages')
+                    .where('to', '==', cleanNum)
+                    .orderBy('timestamp', 'desc')
+                    .limit(100)
+                    .get();
+
+                const messages = [];
+                snapshot.forEach(doc => {
+                    const d = doc.data();
+                    messages.push({
+                        id: doc.id,
+                        from: d.from,
+                        to: d.to,
+                        data: d.data,
+                        timestamp: d.timestamp ? d.timestamp.toMillis() : Date.now()
+                    });
+                });
+
+                return res.status(200).json({ success: true, messages });
+            }
+
+            case 'delete': {
+                if (!Array.isArray(messageIds) || messageIds.length === 0) {
+                    return res.status(400).json({ error: 'ID messaggi non validi' });
+                }
+                if (messageIds.length > 100) {
+                    return res.status(400).json({ error: 'Massimo 100 ID per richiesta' });
+                }
+
+                const batch = db.batch();
+                messageIds.forEach(id => {
+                    const ref = db.collection('messages').doc(id);
+                    batch.delete(ref);
+                });
+                await batch.commit();
+
+                return res.status(200).json({ success: true });
+            }
+
+            default:
+                return res.status(400).json({ error: 'Azione sconosciuta' });
+        }
+    } catch (err) {
+        console.error('API Error:', err);
+        return res.status(500).json({ error: 'Errore interno del server', details: err.message });
     }
 }
