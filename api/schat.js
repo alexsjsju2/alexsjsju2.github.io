@@ -1,81 +1,60 @@
-const admin = require('firebase-admin');
+import admin from 'firebase-admin';
 
-if (!admin.apps.length && process.env.FIREBASE_SERVICE_ACCOUNT) {
+if (!admin.apps.length) {
   try {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount)
     });
   } catch (error) {
-    console.error("Firebase init error", error);
+    console.error("Firebase Auth Error");
   }
 }
 
+const db = admin.apps.length ? admin.firestore() : null;
+
 export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', 'https://www.alexsjsju.eu');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+
+  const { action, payload, user } = req.body;
+
+  if (action === 'login') {
+    if (payload === process.env.PSW_CHAT) return res.status(200).json({ role: 'admin' });
+    return res.status(200).json({ role: 'user' });
   }
 
-  if (!admin.apps.length) {
-    return res.status(500).json({ error: 'Database non configurato' });
-  }
+  if (!db) return res.status(500).json({ error: 'Database non connesso' });
 
-  const db = admin.firestore();
-  const messagesRef = db.collection('transit_messages');
-  const ADMIN_PASSWORD = process.env.PSW_CHAT || 'admin_secret';
-
-  if (req.method === 'POST') {
-    try {
-      const { token, message } = req.body;
-      if (message.sender === 'Admin' && token !== ADMIN_PASSWORD) {
-        return res.status(403).json({ error: 'Non autorizzato' });
-      }
-      
-      await messagesRef.doc(message.id).set({
-        ...message,
-        timestamp: admin.firestore.FieldValue.serverTimestamp()
-      });
-      
+  try {
+    if (action === 'send') {
+      await db.collection('schat_messages').doc(payload.id).set(payload);
       return res.status(200).json({ success: true });
-    } catch (error) {
-      return res.status(500).json({ error: 'Errore invio' });
     }
-  }
 
-  if (req.method === 'GET') {
-    try {
-      const { receiver, token } = req.query;
+    if (action === 'poll') {
+      const messagesRef = db.collection('schat_messages');
+      const snapshot = await messagesRef.where('to', '==', user).get();
       
-      if (receiver === 'Admin' && token !== ADMIN_PASSWORD) {
-        return res.status(403).json({ error: 'Non autorizzato' });
-      }
-
-      if (!receiver) {
-        return res.status(400).json({ error: 'Receiver mancante' });
-      }
-
-      const snapshot = await messagesRef.where('receiver', '==', receiver).get();
-      const messages = [];
-      const batch = db.batch();
-
+      let messages = [];
+      let batch = db.batch();
+      
       snapshot.forEach(doc => {
         messages.push(doc.data());
-        batch.delete(doc.ref); 
+        batch.delete(doc.ref);
       });
-
-      if (messages.length > 0) {
-        await batch.commit();
-      }
-
+      
+      if (messages.length > 0) await batch.commit();
       return res.status(200).json({ messages });
-    } catch (error) {
-      return res.status(500).json({ error: 'Errore lettura' });
     }
+  } catch (error) {
+    return res.status(500).json({ error: 'Internal Server Error' });
   }
 
-  return res.status(405).json({ error: 'Metodo non consentito' });
+  return res.status(400).json({ error: 'Bad Request' });
 }
