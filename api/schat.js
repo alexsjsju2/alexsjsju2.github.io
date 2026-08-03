@@ -34,6 +34,19 @@ export default async function handler(req, res) {
   try {
     if (action === 'send') {
       await db.collection('schat_messages').doc(payload.id).set(payload);
+
+      if (process.env.WEBHOOK_DCC) {
+        try {
+          await fetch(process.env.WEBHOOK_DCC, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              content: `Hai un messaggio su SChat, vai a vedere! da parte di: ${payload.from}`
+            })
+          });
+        } catch (err) {}
+      }
+
       return res.status(200).json({ success: true });
     }
 
