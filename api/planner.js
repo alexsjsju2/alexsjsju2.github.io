@@ -16,13 +16,13 @@ const db = admin.firestore();
 const hash = str => crypto.createHash('sha256').update(String(str)).digest('hex');
 
 export default async function handler(req, res) {
-    const allowedOrigins = ['https://www.alexsjsju.eu', 'https://alexsjsju.eu'];
+    const allowedOrigins = ['https://www.alexsjsju.eu', 'https://alextools.online'];
     const origin = req.headers.origin;
 
     if (allowedOrigins.includes(origin)) {
         res.setHeader('Access-Control-Allow-Origin', origin);
     } else {
-        res.setHeader('Access-Control-Allow-Origin', 'https://www.alexsjsju.eu');
+        res.setHeader('Access-Control-Allow-Origin', 'https://www.alextools.online');
     }
 
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
