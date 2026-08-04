@@ -23,7 +23,7 @@ const SCALL_CRED = process.env.SCALL_CRED
 
 module.exports = async (req, res) => {
 
-  res.setHeader('Access-Control-Allow-Origin', 'https://www.alexsjsju.eu');
+  res.setHeader('Access-Control-Allow-Origin', 'https://www.alextools.online');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Cache-Control, Pragma");
 
