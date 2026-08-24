@@ -1,11 +1,9 @@
 export const config = { api: { bodyParser: { sizeLimit: '100kb' } } };
 
 const cache = new Map();
-const ALLOWED_ORIGIN = "https://alextools.online";
-
 export default async function handler(req, res) {
   if (req.method === "OPTIONS") {
-    res.setHeader("Access-Control-Allow-Origin", ALLOWED_ORIGIN);
+    res.setHeader("Access-Control-Allow-Origin", "https://alextools.online");
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     return res.status(200).end();
