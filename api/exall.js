@@ -43,7 +43,9 @@ export default async function handler(req, res) {
     const model = genAI.getGenerativeModel({
       model: "gemma-4-31b-it",
       generationConfig: {
-        responseMimeType: "application/json"
+        responseMimeType: "application/json",
+        temperature: 0.3, 
+        maxOutputTokens: 4096
       }
     });
 
@@ -57,14 +59,13 @@ export default async function handler(req, res) {
     let prompt = "";
 
     if (type === "initial") {
-      prompt = `L'utente cerca: "${query}".
+      prompt = `Restituisci UN UNICO OGGETTO JSON valido. Non aggiungere testo descrittivo, preamboli o markdown oltre al JSON richiesto.
 
-Genera esattamente 20 titoli condensati e rilevanti correlati al tema.
+Argomento cercato: "${query}"
 
-Per ogni titolo, includi facoltativamente una lista di sottotitoli correlati.
+Genera esattamente 20 titoli condensati e rilevanti correlati al tema. Per ogni titolo, includi facoltativamente una lista di sottotitoli correlati.
 
-Restituisci ESCLUSIVAMENTE un JSON con questo formato:
-
+Usa rigorosamente questa struttura JSON:
 {
   "titles": [
     {
@@ -76,14 +77,14 @@ Restituisci ESCLUSIVAMENTE un JSON con questo formato:
     }
 
     else if (type === "expand") {
-      prompt = `Dato il seguente percorso contestuale:
+      prompt = `Restituisci UN UNICO OGGETTO JSON valido. Nessun testo extra.
 
+Percorso contestuale:
 ${JSON.stringify(chain)}
 
 Genera tra 3 e 7 nuovi titoli correlati ed espansi per approfondire l'ultimo elemento della catena.
 
-Restituisci ESCLUSIVAMENTE un JSON con questo formato:
-
+Usa rigorosamente questa struttura JSON:
 {
   "titles": [
     "Nuovo Titolo 1",
@@ -93,16 +94,14 @@ Restituisci ESCLUSIVAMENTE un JSON con questo formato:
     }
 
     else if (type === "describe") {
-      prompt = `Dato il seguente percorso contestuale:
+      prompt = `Restituisci UN UNICO OGGETTO JSON valido. Nessun testo extra.
 
+Percorso contestuale:
 ${JSON.stringify(chain)}
 
-Fornisci una descrizione sintetica e dettagliata per il titolo:
+Fornisci una descrizione sintetica e dettagliata per il titolo: "${targetTitle}"
 
-"${targetTitle}"
-
-Restituisci ESCLUSIVAMENTE un JSON con questo formato:
-
+Usa rigorosamente questa struttura JSON:
 {
   "description": "Spiegazione chiara ed esplicativa..."
 }`;
@@ -120,16 +119,17 @@ Restituisci ESCLUSIVAMENTE un JSON con questo formato:
     text = text.replace(/^```(json)?|```$/gi, '').trim();
 
     let json;
+
     try {
       json = JSON.parse(text);
     } catch (parseError) {
       console.error("Risposta Gemini non valida:", text);
+
       return res.status(502).json({
         error: "Gemini ha restituito una risposta JSON non valida",
         details: text
       });
     }
-
 
     return res.status(200).json(json);
 
