@@ -115,20 +115,21 @@ Restituisci ESCLUSIVAMENTE un JSON con questo formato:
     }
 
     const result = await model.generateContent(prompt);
+    let text = result.response.text();
 
-    const text = result.response.text();
+    text = text.replace(/^```(json)?|```$/gi, '').trim();
 
     let json;
-
     try {
       json = JSON.parse(text);
     } catch (parseError) {
       console.error("Risposta Gemini non valida:", text);
-
       return res.status(502).json({
-        error: "Gemini ha restituito una risposta JSON non valida"
+        error: "Gemini ha restituito una risposta JSON non valida",
+        details: text
       });
     }
+
 
     return res.status(200).json(json);
 
