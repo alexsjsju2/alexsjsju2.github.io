@@ -9,11 +9,11 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  if (req.headers.origin && req.headers.origin !== ALLOWED_ORIGIN) { 
+  if (req.headers.origin && req.headers.origin !== "https://alextools.online") { 
     return res.status(403).json({ error: "Forbidden origin" });
   }
 
-  res.setHeader("Access-Control-Allow-Origin", ALLOWED_ORIGIN);
+  res.setHeader("Access-Control-Allow-Origin", "https://alextools.online");
 
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method Not Allowed" });
