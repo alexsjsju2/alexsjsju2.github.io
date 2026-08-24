@@ -11,7 +11,7 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  if (req.headers.origin && req.headers.origin !== ALLOWED_ORIGIN) {
+  if (req.headers.origin && req.headers.origin !== ALLOWED_ORIGIN) { 
     return res.status(403).json({ error: "Forbidden origin" });
   }
 
