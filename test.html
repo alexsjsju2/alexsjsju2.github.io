@@ -9,6 +9,7 @@
 <p>This is a paragraph.</p>
 <script>
 
+
 (() => {
   'use strict';
 
@@ -23,17 +24,21 @@
     'Llama-3.2-1B-Instruct-q4f16_1-MLC'
   ];
   const CPU_MODEL_DESKTOP = 'onnx-community/Qwen2.5-0.5B-Instruct';
-  const CPU_MODEL_COMPACT = 'onnx-community/SmolLM2-360M-Instruct-ONNX';
+  const CPU_MODEL_COMPACT = 'onnx-community/SmolLM2-360M-ONNX';
   const STORAGE_KEY = (() => {
     let identity = location.origin + location.pathname;
     if (location.protocol === 'file:') identity = location.href.split(/[?#]/)[0];
-    return 'ai-browser-site-editor:v1:' + identity;
+    return 'ai-browser-site-editor:v2:' + identity;
   })();
   const MAX_PATCHES = 100;
   const MAX_PATCH_CODE = 24000;
 
   let engine = null;
   let enginePromise = null;
+  let cpuWorker = null;
+  let cpuWorkerURL = null;
+  let cpuWorkerRequestId = 0;
+  const cpuWorkerPending = new Map();
   let currentModel = '';
   let engineMode = '';
   let hardwareProfile = null;
@@ -215,7 +220,7 @@
   }
 
   if (!messagesEl.childElementCount) {
-    addMessage('assistant', 'Ciao! Sono un editor AI che gira nel browser. Carica il modello con la freccia in alto oppure scrivi direttamente una richiesta. Scelgo automaticamente il motore in base alle capacità del dispositivo: WebGPU sui computer adatti, un modello ridotto su dispositivi integrati/mobili e un fallback CPU/WebAssembly quando non c’è una GPU utilizzabile. Posso modificare la pagina visibile e salvare le patch in locale.');
+    addMessage('assistant', 'Ciao! Sono un editor AI che gira nel browser. Le modifiche semplici di tema supportate vengono applicate subito; per le altre richieste carica il modello con la freccia in alto oppure scrivi direttamente. Scelgo automaticamente il motore in base alle capacità del dispositivo: WebGPU sui computer adatti, un modello ridotto su dispositivi integrati/mobili e un fallback CPU/WebAssembly quando non c’è una GPU utilizzabile. Posso modificare la pagina visibile e salvare le patch in locale.');
   }
   if (!storageAvailable) {
     $('#warning').textContent = 'Il browser non consente localStorage in questo contesto. Le modifiche potrebbero non sopravvivere al ricaricamento; prova HTTPS o localhost.';
@@ -247,11 +252,11 @@
     return [
       `URL: ${location.href}`,
       `Titolo: ${document.title}`,
-      `Descrizione DOM (body HTML; può essere abbreviata):\n${trimText(bodyHTML, (engineMode === 'transformers-wasm' || hardwareProfile?.constrained) ? 2100 : 3300)}`,
-      `CSS inline (può essere abbreviato):\n${trimText(styles, (engineMode === 'transformers-wasm' || hardwareProfile?.constrained) ? 500 : 750)}`,
-      `JavaScript inline originale (può essere abbreviato):\n${trimText(scripts, (engineMode === 'transformers-wasm' || hardwareProfile?.constrained) ? 800 : 1700)}`,
-      `Riferimenti a script/CSS esterni (il loro contenuto non è letto automaticamente):\n${trimText(externals, (engineMode === 'transformers-wasm' || hardwareProfile?.constrained) ? 220 : 400)}`,
-      `Ultime patch applicate:\n${trimText(patchContext, (engineMode === 'transformers-wasm' || hardwareProfile?.constrained) ? 650 : 1300)}`
+      `Descrizione DOM (body HTML; può essere abbreviata):\n${trimText(bodyHTML, (engineMode.startsWith('transformers-wasm') || hardwareProfile?.constrained) ? 2100 : 3300)}`,
+      `CSS inline (può essere abbreviato):\n${trimText(styles, (engineMode.startsWith('transformers-wasm') || hardwareProfile?.constrained) ? 500 : 750)}`,
+      `JavaScript inline originale (può essere abbreviato):\n${trimText(scripts, (engineMode.startsWith('transformers-wasm') || hardwareProfile?.constrained) ? 800 : 1700)}`,
+      `Riferimenti a script/CSS esterni (il loro contenuto non è letto automaticamente):\n${trimText(externals, (engineMode.startsWith('transformers-wasm') || hardwareProfile?.constrained) ? 220 : 400)}`,
+      `Ultime patch applicate:\n${trimText(patchContext, (engineMode.startsWith('transformers-wasm') || hardwareProfile?.constrained) ? 650 : 1300)}`
     ].join('\n\n');
   }
 
@@ -299,32 +304,136 @@ Il codice generato sarà eseguito nella pagina reale. Preferisci piccoli interve
     return profile;
   }
 
+  function getCpuWorker() {
+    if (cpuWorker) return cpuWorker;
+    const workerSource = `
+      let generator = null;
+      let loadedModelId = '';
+      const send = (id, type, extra = {}) => self.postMessage({ id, type, ...extra });
+      self.addEventListener('message', async (event) => {
+        const { id, type, payload = {} } = event.data || {};
+        try {
+          if (type === 'init') {
+            if (!generator || loadedModelId !== payload.modelId) {
+              send(id, 'progress', { message: 'Scarico la libreria Transformers.js nel worker…' });
+              const mod = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.1');
+              if (mod.env) { mod.env.allowLocalModels = false; mod.env.useBrowserCache = true; }
+              send(id, 'progress', { message: 'Scarico e inizializzo il modello CPU…' });
+              generator = await mod.pipeline('text-generation', payload.modelId, {
+                device: 'wasm',
+                dtype: 'q4',
+                progress_callback: (info) => {
+                  if (!info) return;
+                  let message = 'Inizializzazione modello CPU…';
+                  if (typeof info.progress === 'number') {
+                    message = 'Carico modello CPU ' + Math.round(Math.max(0, Math.min(1, info.progress)) * 100) + '% · ' + (info.file || payload.modelId);
+                  } else if (info.status === 'initiate') {
+                    message = 'Preparo modello CPU · ' + (info.file || payload.modelId);
+                  } else if (info.status === 'done') {
+                    message = 'File pronto · ' + (info.file || payload.modelId);
+                  }
+                  send(id, 'progress', { message });
+                }
+              });
+              loadedModelId = payload.modelId;
+            }
+            send(id, 'ready', { modelId: loadedModelId });
+            return;
+          }
+          if (type === 'generate') {
+            if (!generator) throw new Error('Il modello CPU non è stato inizializzato.');
+            const result = await generator(payload.messages, {
+              max_new_tokens: payload.max_new_tokens || 450,
+              do_sample: false,
+              repetition_penalty: 1.05
+            });
+            const generated = result && result[0] ? result[0].generated_text : null;
+            let text = '';
+            if (Array.isArray(generated)) {
+              let lastAssistant = null;
+              for (let i = generated.length - 1; i >= 0; i--) {
+                const item = generated[i];
+                if (item && item.role === 'assistant' && typeof item.content === 'string') {
+                  lastAssistant = item.content;
+                  break;
+                }
+              }
+              if (lastAssistant !== null) text = lastAssistant;
+              else {
+                const last = generated[generated.length - 1];
+                text = typeof last === 'string' ? last : (last && typeof last.content === 'string' ? last.content : '');
+              }
+            } else if (typeof generated === 'string') {
+              text = generated;
+            }
+            send(id, 'result', { text });
+          }
+        } catch (error) {
+          send(id, 'error', { message: String(error && error.message ? error.message : error) });
+        }
+      });
+    `;
+    const blob = new Blob([workerSource], { type: 'text/javascript' });
+    cpuWorkerURL = URL.createObjectURL(blob);
+    cpuWorker = new Worker(cpuWorkerURL, { type: 'module', name: 'ai-site-editor-cpu' });
+    cpuWorker.addEventListener('message', event => {
+      if (cpuWorkerURL) { URL.revokeObjectURL(cpuWorkerURL); cpuWorkerURL = null; }
+      const data = event.data || {};
+      const pending = cpuWorkerPending.get(data.id);
+      if (!pending) return;
+      if (data.type === 'progress') {
+        if (typeof pending.onProgress === 'function') pending.onProgress(data.message || 'Caricamento…');
+        return;
+      }
+      cpuWorkerPending.delete(data.id);
+      if (data.type === 'error') pending.reject(new Error(data.message || 'Errore nel worker AI CPU.'));
+      else pending.resolve(data);
+    });
+    const failAll = message => {
+      for (const pending of cpuWorkerPending.values()) pending.reject(new Error(message));
+      cpuWorkerPending.clear();
+      try { cpuWorker?.terminate(); } catch (_) {}
+      cpuWorker = null;
+      if (cpuWorkerURL) { URL.revokeObjectURL(cpuWorkerURL); cpuWorkerURL = null; }
+    };
+    cpuWorker.addEventListener('error', event => {
+      failAll('Il worker AI è terminato con un errore. ' + (event.message || 'Controlla la CSP del sito e la connessione.'));
+    });
+    cpuWorker.addEventListener('messageerror', () => failAll('Il browser non è riuscito a leggere una risposta del worker AI.'));
+    return cpuWorker;
+  }
+
+  function cpuWorkerRequest(type, payload, onProgress) {
+    return new Promise((resolve, reject) => {
+      let worker;
+      try { worker = getCpuWorker(); }
+      catch (error) { reject(new Error('Non riesco ad avviare il worker CPU. Il sito potrebbe bloccare worker blob: tramite Content-Security-Policy. ' + (error.message || error))); return; }
+      const id = ++cpuWorkerRequestId;
+      cpuWorkerPending.set(id, { resolve, reject, onProgress });
+      try { worker.postMessage({ id, type, payload }); }
+      catch (error) {
+        cpuWorkerPending.delete(id);
+        reject(error);
+      }
+    });
+  }
+
   async function createWasmEngine(profile) {
     const compact = !!(profile && (profile.mobile || (profile.deviceMemory > 0 && profile.deviceMemory <= 4)));
     const modelId = compact ? CPU_MODEL_COMPACT : CPU_MODEL_DESKTOP;
-    setStatus(compact ? 'GPU non disponibile · preparo il modello CPU compatto…' : 'GPU non disponibile · preparo il modello CPU…');
-    const mod = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.1');
-    if (typeof mod.pipeline !== 'function') throw new Error('Transformers.js non ha esposto pipeline().');
-
-    const generator = await mod.pipeline('text-generation', modelId, {
-      device: 'wasm',
-      dtype: 'q4',
-      progress_callback: info => {
-        if (!info) return;
-        if (typeof info.progress === 'number') {
-          const pct = Math.max(0, Math.min(100, Math.round(info.progress)));
-          setStatus(`Carico modello CPU ${pct}% · ${info.file || modelId}`);
-        } else if (info.status === 'initiate') {
-          setStatus(`Preparo modello CPU · ${info.file || modelId}`);
-        } else if (info.status === 'done') {
-          setStatus(`Modello pronto · ${info.file || modelId}`);
-        }
+    setStatus(compact ? 'GPU non disponibile · preparo il modello CPU compatto in background…' : 'GPU non disponibile · preparo il modello CPU in background…');
+    await cpuWorkerRequest('init', { modelId }, message => setStatus(message));
+    engineMode = 'transformers-wasm-worker';
+    currentModel = `${modelId} · CPU/WebAssembly · worker`;
+    engine = {
+      generate(messages, opts = {}) {
+        return cpuWorkerRequest('generate', {
+          messages,
+          max_new_tokens: opts.max_new_tokens || (compact ? 400 : 600)
+        });
       }
-    });
-    engineMode = 'transformers-wasm';
-    currentModel = `${modelId} · CPU/WebAssembly`;
-    engine = generator;
-    addMessage('system', `Motore CPU locale attivato: ${modelId}. Non è richiesta una GPU. Il modello compatto per dispositivi con risorse limitate può essere meno affidabile sulle richieste complesse. Il primo download è necessario; poi i file possono essere recuperati dalla cache del browser.`);
+    };
+    addMessage('system', `Motore CPU locale attivato in un worker separato: ${modelId}. La pagina dovrebbe rimanere interattiva durante il ragionamento. Il modello compatto può comunque essere lento o non riuscire a seguire richieste complesse.`);
     setStatus(`Pronta · ${currentModel}`);
     return engine;
   }
@@ -501,19 +610,11 @@ Il codice generato sarà eseguito nella pagina reale. Preferisci piccoli interve
     const messages = [{ role: 'system', content: SYSTEM_PROMPT }, ...history, { role: 'user', content: userPayload }];
     let text = '';
 
-    if (engineMode === 'transformers-wasm') {
-      const result = await localEngine(messages, {
-        max_new_tokens: (hardwareProfile && (hardwareProfile.mobile || (hardwareProfile.deviceMemory > 0 && hardwareProfile.deviceMemory <= 4))) ? 650 : 950,
-        do_sample: false,
-        repetition_penalty: 1.05
+    if (engineMode === 'transformers-wasm-worker') {
+      const result = await localEngine.generate(messages, {
+        max_new_tokens: (hardwareProfile && (hardwareProfile.mobile || (hardwareProfile.deviceMemory > 0 && hardwareProfile.deviceMemory <= 4))) ? 400 : 600
       });
-      const generated = result && result[0] ? result[0].generated_text : null;
-      if (Array.isArray(generated)) {
-        const last = generated[generated.length - 1];
-        text = typeof last === 'string' ? last : (last && typeof last.content === 'string' ? last.content : '');
-      } else if (typeof generated === 'string') {
-        text = generated;
-      }
+      text = result && typeof result.text === 'string' ? result.text : '';
     } else {
       let result;
       try {
@@ -567,22 +668,29 @@ Il codice generato sarà eseguito nella pagina reale. Preferisci piccoli interve
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
     const fn = new AsyncFunction('api', 'document', 'window', 'location', `"use strict";\n${value}`);
     let timer;
+    let visibleMutation = false;
+    const observer = new MutationObserver(records => { if (records.length) visibleMutation = true; });
+    observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
     const timeout = new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error('La patch ha impiegato troppo tempo. La pagina verrà ricaricata per ripristinare lo stato precedente.')), 12000);
     });
     try {
       await Promise.race([fn(api, document, window, location), timeout]);
+      await new Promise(resolve => setTimeout(resolve, 70));
+      if (observer.takeRecords().length) visibleMutation = true;
       markPatch(id);
+      return { visibleMutation };
     } finally {
       clearTimeout(timer);
+      observer.disconnect();
     }
   }
 
   async function applyPatch(code, description, opts = {}) {
     const id = 'p' + Date.now().toString(36) + (++patchCounter).toString(36);
     try {
-      await runPatch(code, id);
-      const record = { id, description: String(description || 'Modifica richiesta').slice(0, 400), code: cleanCode(code), createdAt: new Date().toISOString() };
+      const execution = await runPatch(code, id);
+      const record = { id, description: String(description || 'Modifica richiesta').slice(0, 400), code: cleanCode(code), createdAt: new Date().toISOString(), visibleMutation: !!execution.visibleMutation };
       state.patches.push(record);
       state.patches = state.patches.slice(-MAX_PATCHES);
       const saved = persistState();
@@ -590,8 +698,10 @@ Il codice generato sarà eseguito nella pagina reale. Preferisci piccoli interve
       pendingPatch = null;
       pendingEl.classList.remove('show');
       addMessage('system', saved
-        ? `Modifica applicata e salvata. Al prossimo caricamento verrà riapplicata automaticamente.\nPatch: ${record.description}`
-        : 'Modifica applicata alla pagina corrente, ma il browser non ha permesso di salvarla. Non è garantito che resti dopo un ricaricamento.');
+        ? (record.visibleMutation
+          ? `Modifica eseguita, è stato rilevato un cambiamento nel DOM e la patch è stata salvata. Al prossimo caricamento verrà riapplicata automaticamente.\nPatch: ${record.description}`
+          : `Il codice è stato eseguito e salvato, ma non ho rilevato un cambiamento visibile immediato nel DOM. Potrebbe essere una modifica comportamentale, ma non posso confermare che la richiesta sia stata realizzata.\nPatch: ${record.description}`)
+        : 'Codice eseguito nella pagina corrente, ma il browser non ha permesso di salvare la patch. Non è garantito che resti dopo un ricaricamento.');
       return true;
     } catch (error) {
       addMessage('system', `Non sono riuscita ad applicare la modifica: ${error.message || error}`);
@@ -624,6 +734,35 @@ Il codice generato sarà eseguito nella pagina reale. Preferisci piccoli interve
     setStatus(engine ? `Pronta · ${currentModel}` : 'Modello non caricato');
   }
 
+  function buildQuickPatch(instruction) {
+    const normalized = String(instruction || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
+    const asksBackground = /\b(sfondo|background)\b/.test(normalized);
+    const asksText = /\b(scritte?|testo|testi|caratteri|font)\b/.test(normalized);
+    const asksBlack = /\b(nero|nera|black)\b/.test(normalized);
+    const asksWhite = /\b(bianco|bianca|bianchi|bianche|white)\b/.test(normalized);
+    if (asksBackground && asksText && asksBlack && asksWhite) {
+      return {
+        message: 'Ho riconosciuto la richiesta di tema nero con testi bianchi. Applico una patch CSS direttamente, senza attendere la generazione del modello.',
+        code: `(() => {
+          const id = '__ai_browser_site_editor_theme_black_white';
+          let style = document.getElementById(id);
+          if (!style) {
+            style = document.createElement('style');
+            style.id = id;
+            (document.head || document.documentElement).appendChild(style);
+          }
+          style.textContent = 'html,body{background-color:#000!important;color:#fff!important} body,body *{background-color:#000!important;color:#fff!important;border-color:#444!important} body img,body video,body canvas,body iframe,body picture{background-color:transparent!important}';
+          document.documentElement.style.setProperty('background-color', '#000', 'important');
+          if (document.body) {
+            document.body.style.setProperty('background-color', '#000', 'important');
+            document.body.style.setProperty('color', '#fff', 'important');
+          }
+        })();`
+      };
+    }
+    return null;
+  }
+
   async function submitInstruction(text) {
     if (busy) return;
     const instruction = String(text || '').trim();
@@ -639,24 +778,31 @@ Il codice generato sarà eseguito nella pagina reale. Preferisci piccoli interve
     inputEl.disabled = true;
     setStatus(engine ? 'Sto ragionando…' : 'Avvio il modello locale…');
     try {
-      const response = await generateResponse(instruction);
-      addMessage('assistant', response.message || 'Ho terminato la richiesta.');
-      state.history.push({ role: 'user', content: instruction.slice(0, 900) });
-      state.history.push({ role: 'assistant', content: (response.message || '').slice(0, 1200) });
-      state.history = state.history.slice(-6);
+      const quickPatch = buildQuickPatch(instruction);
+      if (quickPatch) {
+        addMessage('assistant', quickPatch.message);
+        setStatus('Applico la modifica direttamente…');
+        await applyPatch(quickPatch.code, instruction);
+      } else {
+        const response = await generateResponse(instruction);
+        addMessage('assistant', response.message || 'Ho terminato la richiesta.');
+        state.history.push({ role: 'user', content: instruction.slice(0, 900) });
+        state.history.push({ role: 'assistant', content: (response.message || '').slice(0, 1200) });
+        state.history = state.history.slice(-6);
 
-      if (response.apply && response.code) {
-        if (autoApplyEl.checked) {
-          setStatus('Applico la modifica…');
-          await applyPatch(response.code, instruction);
-        } else {
-          pendingPatch = { code: response.code, description: instruction };
-          pendingDesc.textContent = response.message || 'Il modello ha preparato una patch JavaScript.';
-          pendingEl.classList.add('show');
-          addMessage('system', 'La patch è pronta ma non è stata eseguita. Premi «Applica modifica» per eseguirla oppure «Scarta».');
+        if (response.apply && response.code) {
+          if (autoApplyEl.checked) {
+            setStatus('Applico la modifica…');
+            await applyPatch(response.code, instruction);
+          } else {
+            pendingPatch = { code: response.code, description: instruction };
+            pendingDesc.textContent = response.message || 'Il modello ha preparato una patch JavaScript.';
+            pendingEl.classList.add('show');
+            addMessage('system', 'La patch è pronta ma non è stata eseguita. Premi «Applica modifica» per eseguirla oppure «Scarta».');
+          }
+        } else if (response.apply && !response.code) {
+          addMessage('system', 'Il modello ha indicato una modifica ma non ha generato codice eseguibile. Non è stata applicata. Prova a descrivere l’intervento in modo più specifico.');
         }
-      } else if (response.apply && !response.code) {
-        addMessage('system', 'Il modello ha indicato una modifica ma non ha generato codice eseguibile. Prova a descrivere l’intervento in modo più specifico.');
       }
       persistState();
       refreshMemoryLabel();
