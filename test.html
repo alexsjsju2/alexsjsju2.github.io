@@ -10,6 +10,7 @@
 <script>
 
 
+
 (() => {
   'use strict';
 
@@ -30,6 +31,39 @@
     if (location.protocol === 'file:') identity = location.href.split(/[?#]/)[0];
     return 'ai-browser-site-editor:v3:' + identity;
   })();
+  const GEMINI_SETTINGS_KEY = (() => {
+    const identity = location.protocol === 'file:' ? location.href.split(/[?#]/)[0] : location.origin;
+    return 'ai-browser-site-editor:gemini-settings:v1:' + identity;
+  })();
+  const DEFAULT_GEMINI_MODEL = 'gemini-3-flash-preview';
+  const GEMINI_MODEL_GROUPS = [
+    { label: 'Gemini · modelli richiesti', models: [
+      { label: 'Gemini 2.5 Flash', id: 'gemini-2.5-flash' },
+      { label: 'Gemini 3 Flash (anteprima)', id: 'gemini-3-flash-preview' },
+      { label: 'Gemini 2.5 Flash Lite', id: 'gemini-2.5-flash-lite' }
+    ]},
+    { label: 'Gemma 3 · modelli legacy (possono non essere più disponibili)', models: [
+      { label: 'Gemma 3 27B · legacy', id: 'gemma-3-27b-it' },
+      { label: 'Gemma 3 12B · legacy', id: 'gemma-3-12b-it' },
+      { label: 'Gemma 3 4B · legacy', id: 'gemma-3-4b-it' },
+      { label: 'Gemma 3 2B · non esiste come modello Gemma 3 standard', id: 'gemma-3-2b-it', disabled: true },
+      { label: 'Gemma 3 1B · legacy', id: 'gemma-3-1b-it' }
+    ]},
+    { label: 'Gemma · alternative attualmente documentate dalla Gemini API', models: [
+      { label: 'Gemma 4 26B A4B · consigliato tra Gemma', id: 'gemma-4-26b-a4b-it' },
+      { label: 'Gemma 4 31B', id: 'gemma-4-31b-it' }
+    ]}
+  ];
+  let geminiSettings = { apiKey: '', model: DEFAULT_GEMINI_MODEL, rememberKey: true };
+  try {
+    const savedGemini = JSON.parse(localStorage.getItem(GEMINI_SETTINGS_KEY) || 'null');
+    if (savedGemini && typeof savedGemini === 'object') {
+      geminiSettings.model = typeof savedGemini.model === 'string' ? savedGemini.model : DEFAULT_GEMINI_MODEL;
+      geminiSettings.rememberKey = savedGemini.rememberKey !== false;
+      geminiSettings.apiKey = geminiSettings.rememberKey && typeof savedGemini.apiKey === 'string' ? savedGemini.apiKey : '';
+    }
+  } catch (_) { /* settings non disponibili in questo contesto */ }
+
   const MAX_PATCHES = 100;
   const MAX_PATCH_CODE = 24000;
 
@@ -40,7 +74,7 @@
   let cpuWorkerRequestId = 0;
   const cpuWorkerPending = new Map();
   let currentModel = '';
-  let engineMode = ''; 
+  let engineMode = '';
   let hardwareProfile = null;
   let busy = false;
   let pendingPatch = null;
@@ -125,12 +159,30 @@
       .load { background: #31456c; }
       .warning { margin: 10px 12px 0; border: 1px solid #594d32; background: #2b2518; border-radius: 9px; padding: 8px 9px; color: #ebd9a8; font-size: 11px; }
       .hidden { display: none !important; }
+      .settings-screen { display: none; position: absolute; z-index: 20; inset: 58px 0 0; flex-direction: column; gap: 12px; overflow: auto; padding: 14px; background: #101522; color: #edf1fa; }
+      .settings-screen.open { display: flex; }
+      .settings-top { display: flex; align-items: flex-start; gap: 12px; }
+      .settings-top-copy { flex: 1; min-width: 0; }
+      .settings-title { font-size: 16px; font-weight: 800; }
+      .settings-subtitle { margin-top: 4px; color: #a9b4ca; font-size: 11px; }
+      .setting-label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 700; }
+      .setting-input, .settings-screen select { display: block; width: 100%; min-height: 39px; border: 1px solid #3a455d; border-radius: 9px; outline: none; padding: 9px 10px; background: #0c111c; color: #f2f5fb; font: 12px/1.4 system-ui, sans-serif; }
+      .setting-input:focus, .settings-screen select:focus { border-color: #829be5; box-shadow: 0 0 0 2px #829be522; }
+      .remember-row { display: flex; align-items: flex-start; gap: 8px; color: #d1d8e7; font-size: 12px; font-weight: 500; }
+      .remember-row input { margin-top: 2px; accent-color: #8da8ff; }
+      .settings-help { color: #a9b4ca; font-size: 11px; line-height: 1.5; }
+      .settings-alert { border: 1px solid #594d32; background: #2b2518; border-radius: 9px; padding: 9px; color: #ebd9a8; font-size: 11px; line-height: 1.5; }
+      .settings-actions { display: flex; gap: 7px; flex-wrap: wrap; }
+      .settings-actions button { flex: 1 1 auto; min-height: 34px; }
+      .settings-status { color: #b5c6ff; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .settings-link { color: #b5c6ff; font-size: 12px; text-decoration: underline; }
       @media (max-width: 520px) { .panel { right: 8px; bottom: 78px; height: min(72vh, 650px); width: calc(100vw - 16px); } .launcher { right: 12px; bottom: 12px; } }
     </style>
     <button class="launcher" aria-label="Apri AI del sito" title="Apri AI del sito">✦</button>
     <section class="panel" role="dialog" aria-label="AI per modificare il sito">
       <div class="header">
-        <div class="brand"><div class="title">AI Editor del sito · remoto + locale</div><div class="status" id="status">AI remota senza chiave · pronta</div></div>
+        <div class="brand"><div class="title">AI Editor del sito · Gemini</div><div class="status" id="status">Configura la chiave Gemini</div></div>
+        <button class="iconbtn" id="settingsbtn" title="Impostazioni Gemini" aria-label="Impostazioni Gemini">⚙</button>
         <button class="iconbtn" id="load" title="Carica il modello locale di riserva (può richiedere molto tempo)" aria-label="Carica AI locale di riserva">↓</button>
         <button class="iconbtn" id="close" title="Chiudi" aria-label="Chiudi">×</button>
       </div>
@@ -138,7 +190,28 @@
         <label class="autowrap"><input id="auto" type="checkbox" checked> Applica le modifiche automaticamente</label>
         <span id="memstatus">Memoria locale</span>
       </div>
-      <div class="warning" id="warning">Per impostazione predefinita le richieste passano a un servizio AI pubblico senza chiave personale: l’istruzione e parte del contenuto della pagina vengono inviati fuori dal browser. Non usare su pagine con dati sensibili. Il codice generato può modificare la pagina: controlla le patch.</div>
+      <div class="settings-screen" id="settingsscreen" aria-label="Impostazioni Gemini">
+        <div class="settings-top">
+          <div class="settings-top-copy"><div class="settings-title">Impostazioni Gemini</div><div class="settings-subtitle">La chiave appartiene a te; non è incorporata nel codice.</div></div>
+          <button class="iconbtn" id="closesettings" title="Chiudi impostazioni" aria-label="Chiudi impostazioni">×</button>
+        </div>
+        <label class="setting-label" for="apikey">Chiave API Gemini
+          <input class="setting-input" id="apikey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Incolla la tua chiave Gemini">
+        </label>
+        <label class="remember-row"><input id="rememberkey" type="checkbox" checked> <span>Ricorda la chiave in localStorage su questo sito</span></label>
+        <label class="setting-label" for="model">Modello AI
+          <select id="model"></select>
+        </label>
+        <div class="settings-alert">Sicurezza: localStorage è comodo ma non cifra la chiave. Gli script che girano sulla stessa origine potrebbero leggerla. Togli la spunta per usarla solo fino al ricaricamento della pagina. La documentazione Gemini attuale elenca Gemma 4 come famiglia Gemma hosted; le voci Gemma 3 sono lasciate come legacy e possono restituire errore. Gemma 3 2B non è una taglia ufficiale standard.</div>
+        <div class="settings-actions">
+          <button id="saveSettings">Salva</button>
+          <button id="testSettings">Verifica chiave e modello</button>
+          <button id="clearKey">Rimuovi chiave</button>
+        </div>
+        <div class="settings-status" id="settingsstatus" aria-live="polite"></div>
+        <a class="settings-link" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Apri Google AI Studio per creare o gestire la chiave</a>
+      </div>
+      <div class="warning" id="warning">Configura la tua chiave Gemini dal pulsante ⚙. L’istruzione e il contesto della pagina verranno inviati a Google. La chiave salvata in localStorage non è protetta contro altri script eseguiti sulla stessa origine; non usare pagine con dati sensibili.</div>
       <div class="messages" id="messages" aria-live="polite"></div>
       <div class="pending" id="pending">
         <div class="pending-title">Modifica pronta da applicare</div>
@@ -147,7 +220,7 @@
       </div>
       <form class="composer" id="form">
         <textarea id="input" placeholder="Es. Aggiungi un paragrafo sotto al titolo principale…" aria-label="Istruzione per l'AI"></textarea>
-        <div class="sendrow"><span class="hint">Comandi letterali immediati; AI remota gratuita senza chiave per richieste complesse. Freccia ↓ = fallback locale.</span><button class="send" id="send" type="submit">Invia ↑</button></div>
+        <div class="sendrow"><span class="hint">Modifiche letterali immediate; Gemini per richieste aperte. Freccia ↓ = fallback locale.</span><button class="send" id="send" type="submit">Invia ↑</button></div>
       </form>
       <div class="footer">
         <button id="undo" title="Ricarica la pagina e rimuove l'ultima patch">Annulla ultima</button>
@@ -168,16 +241,88 @@
   const autoApplyEl = $('#auto');
   const pendingEl = $('#pending');
   const pendingDesc = $('#pendingdesc');
+  const settingsScreen = $('#settingsscreen');
+  const apiKeyInput = $('#apikey');
+  const modelSelect = $('#model');
+  const rememberKeyInput = $('#rememberkey');
+  const settingsStatus = $('#settingsstatus');
+
+  modelSelect.innerHTML = GEMINI_MODEL_GROUPS.map(group => `<optgroup label="${group.label}">${group.models.map(model => `<option value="${model.id}" ${model.disabled ? 'disabled' : ''}>${model.label}</option>`).join('')}</optgroup>`).join('');
+  if ([...modelSelect.options].some(option => option.value === geminiSettings.model && !option.disabled)) modelSelect.value = geminiSettings.model;
+  else modelSelect.value = DEFAULT_GEMINI_MODEL;
+
+  function loadSettingsIntoForm() {
+    apiKeyInput.value = geminiSettings.apiKey || '';
+    modelSelect.value = geminiSettings.model || DEFAULT_GEMINI_MODEL;
+    rememberKeyInput.checked = geminiSettings.rememberKey !== false;
+    settingsStatus.textContent = geminiSettings.apiKey ? 'Chiave caricata per questa sessione.' : 'Inserisci la chiave e premi «Salva». Puoi verificare il modello prima di usarlo.';
+  }
+
+  function saveGeminiSettings(silent = false) {
+    const enteredKey = apiKeyInput.value.trim();
+    const key = enteredKey || geminiSettings.apiKey || '';
+    const model = modelSelect.value || DEFAULT_GEMINI_MODEL;
+    const rememberKey = rememberKeyInput.checked;
+    geminiSettings = { apiKey: key, model, rememberKey };
+    try {
+      localStorage.setItem(GEMINI_SETTINGS_KEY, JSON.stringify({ apiKey: rememberKey ? key : '', model, rememberKey }));
+    } catch (error) {
+      settingsStatus.textContent = 'Non riesco a salvare le impostazioni in localStorage. La chiave resterà solo nella memoria di questa pagina.';
+      if (rememberKey) geminiSettings.rememberKey = false;
+    }
+    if (!key) settingsStatus.textContent = 'Modello salvato. Per usare Gemini inserisci prima una chiave API.';
+    else if (!silent) settingsStatus.textContent = rememberKey ? 'Impostazioni salvate in questo browser.' : 'Modello salvato; la chiave resterà solo finché questa pagina rimane aperta.';
+    if (key) setStatus(`Gemini pronto · ${model}`);
+    else setStatus('Configura la chiave Gemini');
+    return !!key;
+  }
 
   function setStatus(text) { statusEl.textContent = String(text || '').slice(0, 180); }
   function openPanel() { panel.classList.add('open'); launcher.classList.add('hidden'); }
   function closePanel() { panel.classList.remove('open'); launcher.classList.remove('hidden'); }
   launcher.addEventListener('click', openPanel);
   $('#close').addEventListener('click', closePanel);
-  loadBtn.addEventListener('click', () => { addMessage('system', 'Caricamento del modello locale di riserva: il primo download può essere molto grande e richiedere tempo. Le richieste continueranno a provare prima l’AI remota.'); ensureEngine().catch(err => showError(err)); });
+  $('#settingsbtn').addEventListener('click', () => { loadSettingsIntoForm(); settingsScreen.classList.add('open'); });
+  $('#closesettings').addEventListener('click', () => settingsScreen.classList.remove('open'));
+  $('#saveSettings').addEventListener('click', () => {
+    const hasKey = saveGeminiSettings(false);
+    if (hasKey) addMessage('system', `Impostazioni Gemini salvate. Modello selezionato: ${geminiSettings.model}.`);
+  });
+  $('#clearKey').addEventListener('click', () => {
+    geminiSettings.apiKey = '';
+    apiKeyInput.value = '';
+    saveGeminiSettings(true);
+    try {
+      localStorage.setItem(GEMINI_SETTINGS_KEY, JSON.stringify({ apiKey: '', model: modelSelect.value || DEFAULT_GEMINI_MODEL, rememberKey: rememberKeyInput.checked }));
+    } catch (_) {}
+    settingsStatus.textContent = 'Chiave rimossa dalla memoria della pagina e, se salvata, dal localStorage.';
+    setStatus('Chiave Gemini rimossa');
+  });
+  $('#testSettings').addEventListener('click', async () => {
+    saveGeminiSettings(true);
+    if (!geminiSettings.apiKey) {
+      settingsStatus.textContent = 'Inserisci una chiave API prima di fare il test.';
+      return;
+    }
+    const testButton = $('#testSettings');
+    testButton.disabled = true;
+    settingsStatus.textContent = `Verifico ${geminiSettings.model}…`;
+    try {
+      const reply = await callGemini([
+        { role: 'system', content: 'Rispondi esclusivamente con la parola OK.' },
+        { role: 'user', content: 'Rispondi esclusivamente con la parola OK.' }
+      ], 'test connessione', { kind: 'test', maxTokens: 12, timeoutMs: 35000 });
+      settingsStatus.textContent = `Connessione riuscita con ${geminiSettings.model}. Risposta: ${trimText(reply, 100)}`;
+      addMessage('system', `Test Gemini riuscito · ${geminiSettings.model}.`);
+    } catch (error) {
+      settingsStatus.textContent = `Test fallito: ${error.message || error}`;
+    } finally {
+      testButton.disabled = false;
+    }
+  });
+  loadBtn.addEventListener('click', () => { addMessage('system', 'Caricamento del modello locale di riserva: il primo download può essere molto grande e richiedere tempo. Gemini resta il motore principale finché la chiave è configurata.'); ensureEngine().catch(err => showError(err)); });
 
   function renderText(container, text) {
-    // Visualizza il testo e i blocchi di codice senza interpretare HTML prodotto dall'AI.
     const re = /```([^\n`]*)\n([\s\S]*?)```/g;
     let last = 0, match;
     const value = String(text ?? '');
@@ -199,7 +344,7 @@
     box.className = 'message ' + role;
     const label = document.createElement('div');
     label.className = 'role';
-    label.textContent = role === 'user' ? 'Tu' : role === 'system' ? 'Sistema' : 'AI locale';
+    label.textContent = role === 'user' ? 'Tu' : role === 'system' ? 'Sistema' : 'Gemini / AI';
     const body = document.createElement('div');
     renderText(body, text);
     box.append(label, body);
@@ -210,7 +355,7 @@
 
   function showError(error) {
     const message = error && error.message ? error.message : String(error || 'Errore sconosciuto');
-    addMessage('system', 'Errore: ' + message + '\n\nLe richieste provano prima due servizi AI pubblici senza chiave personale. Se sono indisponibili, premi la freccia ↓ per caricare il modello locale di riserva. Il modello locale richiede Internet al primo download e funziona meglio su HTTPS o localhost.');
+    addMessage('system', 'Errore: ' + message + '\n\nApri ⚙ per controllare la chiave e il modello Gemini. Se vuoi, puoi caricare il modello locale di riserva con la freccia ↓. Il modello locale richiede Internet al primo download e funziona meglio su HTTPS o localhost.');
     setStatus('Errore: controlla il messaggio');
   }
 
@@ -221,7 +366,7 @@
   }
 
   if (!messagesEl.childElementCount) {
-    addMessage('assistant', 'Ciao! Le modifiche letterali semplici vengono applicate subito. Per temi e richieste complesse uso prima un modello AI remoto gratuito senza chiave personale, con un secondo servizio di riserva. La freccia ↓ carica facoltativamente un modello locale. Le patch vengono salvate in localStorage e riapplicate al caricamento. Nota: con l’AI remota, l’istruzione e il contesto necessario della pagina vengono inviati al servizio esterno.');
+    addMessage('assistant', 'Ciao! Le modifiche letterali semplici vengono applicate subito. Per temi e richieste complesse uso Gemini, con il modello selezionato nel pannello ⚙. Inserisci la tua chiave API e premi «Verifica chiave e modello». Le patch vengono salvate in localStorage e riapplicate al caricamento. L’istruzione e il contesto necessario della pagina vengono inviati a Google. La chiave è salvata localmente solo se scegli di ricordarla; localStorage non è un archivio sicuro.');
   }
   if (!storageAvailable) {
     $('#warning').textContent = 'Il browser non consente localStorage in questo contesto. Le modifiche potrebbero non sopravvivere al ricaricamento; prova HTTPS o localhost.';
@@ -622,109 +767,130 @@ Individua elementi con il DOM reale. Non inventare selettori; usa fallback robus
     return null;
   }
 
-  const REMOTE_PROVIDERS = [
-    {
-      name: 'BlockRun · GPT-OSS 20B',
-      url: 'https://blockrun.ai/api/v1/chat/completions',
-      model: 'nvidia/gpt-oss-20b',
-      timeoutMs: 12000
-    },
-    {
-      name: 'Cehpoint AI · fallback',
-      url: 'https://ai-api.cehpoint.co.in/v1/chat/completions',
-      model: 'cehpoint-ai',
-      timeoutMs: 9000
-    }
-  ];
   let lastAIProvider = '';
   let lastRemoteError = '';
 
-  function modelContentFromPayload(payload) {
-    const content = payload?.choices?.[0]?.message?.content;
-    if (typeof content === 'string') return content;
-    if (Array.isArray(content)) return content.map(part => typeof part === 'string' ? part : (part?.text || '')).join('');
-    return '';
+  function extractGeminiText(payload) {
+    const candidates = Array.isArray(payload?.candidates) ? payload.candidates : [];
+    return candidates.map(candidate => (candidate?.content?.parts || [])
+      .filter(part => part && typeof part.text === 'string' && !part.thought)
+      .map(part => part.text).join('')).join('');
   }
 
-  function deltaContentFromPayload(payload) {
-    const delta = payload?.choices?.[0]?.delta?.content;
-    if (typeof delta === 'string') return delta;
-    if (Array.isArray(delta)) return delta.map(part => typeof part === 'string' ? part : (part?.text || '')).join('');
-    return '';
-  }
-
-  async function readRemoteCompletion(response, provider) {
-    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-    if (contentType.includes('text/event-stream') && response.body?.getReader) {
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let assembled = '';
-      const consumeLine = line => {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('data:')) return;
-        const data = trimmed.slice(5).trim();
-        if (!data || data === '[DONE]') return;
-        try {
-          const json = JSON.parse(data);
-          assembled += deltaContentFromPayload(json);
-          if (assembled.length) setStatus(`${provider.name} · risposta in arrivo (${assembled.length} caratteri)…`);
-        } catch (_) { /* ignora heartbeat/eventi non JSON */ }
-      };
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split(/\r?\n/);
-        buffer = lines.pop() || '';
-        for (const line of lines) consumeLine(line);
+  function getGeminiErrorMessage(payload, status, model) {
+    const apiMessage = payload?.error?.message || payload?.message || '';
+    if (status === 400 || status === 404) {
+      if (model.startsWith('gemma-3-')) {
+        return `Il modello ${model} non risulta disponibile nella Gemini API attuale o non supporta generateContent. Google documenta ora Gemma 4 per l'accesso hosted. Scegli un modello Gemini o Gemma 4. ${apiMessage}`.trim();
       }
-      buffer += decoder.decode();
-      if (buffer.trim()) consumeLine(buffer);
-      if (!assembled.trim()) throw new Error(`${provider.name}: stream terminato senza testo leggibile.`);
-      return assembled.trim();
+      return `Gemini ha rifiutato il modello o la richiesta (${model}). Verifica che il modello sia disponibile per la tua chiave. ${apiMessage}`.trim();
     }
-    const payload = await response.json();
-    const content = modelContentFromPayload(payload);
-    if (!content.trim()) throw new Error(`${provider.name}: risposta vuota o in formato inatteso.`);
-    return content.trim();
+    if (status === 401 || status === 403) return `Autenticazione Gemini rifiutata (HTTP ${status}). Controlla la chiave in ⚙ e le restrizioni della chiave. ${apiMessage}`.trim();
+    if (status === 429) return `Limite di richieste/quota Gemini raggiunto (HTTP 429). Attendi o controlla quote e fatturazione. ${apiMessage}`.trim();
+    return `Gemini API HTTP ${status}: ${apiMessage || 'errore senza dettagli'}`.trim();
   }
 
-  async function callRemoteProvider(provider, messages, userText, options = {}) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), provider.timeoutMs);
+  async function callGemini(messages, userText, options = {}) {
+    if (!geminiSettings.apiKey) {
+      const error = new Error('Chiave Gemini non configurata. Apri il pulsante ⚙, inserisci la chiave API e premi «Salva». Puoi crearla in Google AI Studio.');
+      error.code = 'GEMINI_KEY_MISSING';
+      throw error;
+    }
+    const model = geminiSettings.model || DEFAULT_GEMINI_MODEL;
+    const systemInstruction = messages.filter(message => message.role === 'system').map(message => String(message.content || '')).join('\n\n').trim();
+    let contents = messages.filter(message => message.role !== 'system').map(message => ({
+      role: message.role === 'assistant' || message.role === 'model' ? 'model' : 'user',
+      parts: [{ text: String(message.content || '') }]
+    })).filter(item => item.parts[0].text);
+    if (!contents.length) contents = [{ role: 'user', parts: [{ text: String(userText || 'Esegui la richiesta.') }] }];
+
+    const isLegacyGemma3 = model.startsWith('gemma-3-');
+    const body = { contents };
+    if (systemInstruction) {
+      if (!isLegacyGemma3) body.systemInstruction = { parts: [{ text: systemInstruction }] };
+      else {
+        const firstUser = contents.find(item => item.role === 'user');
+        if (firstUser) firstUser.parts[0].text = `ISTRUZIONI DI SISTEMA:\n${systemInstruction}\n\nRICHIESTA/CONTESTO:\n${firstUser.parts[0].text}`;
+      }
+    }
+
     const asksFullSource = /tutto il codice|codice completo|sorgente completo|intero html|tutta la pagina/i.test(userText);
-    const body = {
-      model: provider.model,
-      messages,
+    const generationConfig = {
       temperature: 0.1,
-      max_tokens: options.maxTokens || (asksFullSource ? 6000 : (options.kind === 'theme' ? 160 : 1100)),
-      stream: true
+      topP: 0.85,
+      maxOutputTokens: options.maxTokens || (asksFullSource ? 6000 : (options.kind === 'theme' ? 160 : 1100))
     };
+    if (model.startsWith('gemini-3-')) {
+      generationConfig.thinkingConfig = { thinkingLevel: options.kind === 'coding' ? 'medium' : 'low' };
+    } else if (model.startsWith('gemini-2.5-')) {
+      generationConfig.thinkingConfig = { thinkingBudget: options.kind === 'coding' ? 768 : 256 };
+    }
+    if (!model.startsWith('gemma-3-')) generationConfig.responseMimeType = 'application/json';
+    body.generationConfig = generationConfig;
+
+    const controller = new AbortController();
+    const timeoutMs = options.timeoutMs || (asksFullSource ? 120000 : 55000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const modelUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`;
     try {
-      setStatus(`Contatto ${provider.name}…`);
-      const response = await fetch(provider.url, {
+      setStatus(`Gemini · ${model} · attendo la risposta…`);
+      const response = await fetch(modelUrl, {
         method: 'POST',
         mode: 'cors',
         cache: 'no-store',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiSettings.apiKey },
         body: JSON.stringify(body),
         signal: controller.signal
       });
       if (!response.ok) {
-        const detail = (await response.text().catch(() => '')).slice(0, 220);
-        throw new Error(`${provider.name}: HTTP ${response.status}${detail ? ' · ' + detail : ''}`);
+        const detailText = await response.text().catch(() => '');
+        let detailPayload = null;
+        try { detailPayload = JSON.parse(detailText); } catch (_) {}
+        const error = new Error(getGeminiErrorMessage(detailPayload, response.status, model));
+        error.apiStatus = response.status;
+        throw error;
       }
-      const text = await readRemoteCompletion(response, provider);
-      lastAIProvider = provider.name;
+
+      let assembled = '';
+      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+      if (contentType.includes('text/event-stream') && response.body?.getReader) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        const consumeEvent = eventText => {
+          const data = eventText.split(/\r?\n/).filter(line => line.trim().startsWith('data:')).map(line => line.replace(/^\s*data:\s?/, '')).join('\n').trim();
+          if (!data || data === '[DONE]') return;
+          try {
+            const payload = JSON.parse(data);
+            assembled += extractGeminiText(payload);
+            if (assembled) setStatus(`Gemini · ${model} · ${assembled.length} caratteri ricevuti…`);
+          } catch (_) { /* ignora heartbeat o chunk incompleti */ }
+        };
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split(/\r?\n\r?\n/);
+          buffer = events.pop() || '';
+          events.forEach(consumeEvent);
+        }
+        buffer += decoder.decode();
+        if (buffer.trim()) consumeEvent(buffer);
+      } else {
+        const payload = await response.json();
+        assembled = extractGeminiText(payload);
+        if (!assembled && payload?.promptFeedback?.blockReason) throw new Error(`Gemini ha bloccato la richiesta: ${payload.promptFeedback.blockReason}`);
+      }
+      if (!assembled.trim()) throw new Error(`Gemini (${model}) ha restituito una risposta vuota. Verifica supporto del modello, quota e chiave API.`);
+      lastAIProvider = `Gemini API · ${model}`;
       lastRemoteError = '';
-      return text;
+      return assembled.trim();
     } catch (error) {
       const message = error?.name === 'AbortError'
-        ? `timeout dopo ${Math.round(provider.timeoutMs / 1000)} secondi`
-        : String(error?.message || error).slice(0, 260);
-      lastRemoteError = `${provider.name}: ${message}`;
-      throw new Error(lastRemoteError);
+        ? `Gemini ha superato il timeout di ${Math.round(timeoutMs / 1000)} secondi.`
+        : String(error?.message || error).slice(0, 700);
+      lastRemoteError = message;
+      throw error instanceof Error ? error : new Error(message);
     } finally {
       clearTimeout(timer);
     }
@@ -763,24 +929,22 @@ Individua elementi con il DOM reale. Non inventare selettori; usa fallback robus
   }
 
   async function generateWithPreferredAI(messages, userText, options = {}) {
-    const failures = [];
-    for (const provider of REMOTE_PROVIDERS) {
-      try {
-        const text = await callRemoteProvider(provider, messages, userText, options);
-        setStatus(`AI pronta · ${provider.name}`);
-        return text;
-      } catch (error) {
-        failures.push(String(error?.message || error));
-        setStatus('Servizio remoto non disponibile · provo il fallback…');
+    try {
+      const text = await callGemini(messages, userText, options);
+      setStatus(`AI pronta · ${lastAIProvider}`);
+      return text;
+    } catch (error) {
+      const message = String(error?.message || error);
+      const canUseLocal = !!engine && (!error?.apiStatus || error.apiStatus >= 500 || error?.name === 'AbortError' || error?.code === 'GEMINI_KEY_MISSING');
+      if (canUseLocal) {
+        addMessage('system', `Gemini non è riuscito a rispondere (${trimText(message, 220)}). Uso il modello locale già caricato.`);
+        setStatus(`Fallback locale · ${currentModel}`);
+        const result = await generateLocalText(messages, userText, options);
+        lastAIProvider = `Fallback locale · ${currentModel}`;
+        return result;
       }
+      throw error;
     }
-    lastRemoteError = failures.join(' | ').slice(0, 500);
-    if (engine) {
-      addMessage('system', 'I servizi AI pubblici non hanno risposto. Uso il modello locale già caricato.');
-      setStatus(`Fallback locale · ${currentModel}`);
-      return generateLocalText(messages, userText, options);
-    }
-    throw new Error('I servizi AI pubblici non sono riusciti a rispondere. ' + lastRemoteError + ' Puoi riprovare oppure premere la freccia ↓ per caricare manualmente il modello locale.');
   }
 
   const THEME_SYSTEM_PROMPT = `Interpreta la richiesta visiva e restituisci SOLO JSON valido con tre chiavi: background, text, message. background e text devono essere un colore CSS valido oppure null se quella proprietà non è richiesta. Esempio per sfondo nero e testo bianco: {"background":"#000000","text":"#ffffff","message":"Imposto lo sfondo nero e il testo bianco."}. Estrai i colori richiesti dall'utente, non copiare l'esempio quando non corrisponde. Non generare codice, non usare segnaposto e non includere Markdown.`;
@@ -875,6 +1039,11 @@ Individua elementi con il DOM reale. Non inventare selettori; usa fallback robus
     } catch (error) {
       text = '';
       lastRemoteError = String(error?.message || error);
+      return {
+        message: `Non ho potuto consultare Gemini, quindi non ho applicato il tema. ${lastRemoteError}`,
+        apply: false,
+        code: ''
+      };
     }
     const parsed = parseModelJSON(text);
     let background = parsed ? safeThemeColor(parsed.background) : null;
@@ -891,7 +1060,7 @@ Individua elementi con il DOM reale. Non inventare selettori; usa fallback robus
     }
     const description = [background ? `sfondo ${background}` : '', textColor ? `testo ${textColor}` : ''].filter(Boolean).join(' e ');
     return {
-      message: `L'AI ha interpretato la richiesta come: ${description}. Applico e salvo la modifica CSS. Motore: ${lastAIProvider || (engine ? 'locale' : 'AI pubblica')}.`,
+      message: `L'AI ha interpretato la richiesta come: ${description}. Applico e salvo la modifica CSS. Motore: ${lastAIProvider || (engine ? 'locale' : 'Gemini API')}.`,
       apply: true,
       code: buildThemePatch(background, textColor)
     };
@@ -1025,7 +1194,7 @@ Individua elementi con il DOM reale. Non inventare selettori; usa fallback robus
     }
     if (changed) persistState();
     refreshMemoryLabel();
-    setStatus(engine ? `Pronta · fallback locale ${currentModel}` : 'Pronta · AI remota senza chiave personale');
+    setStatus(engine ? `Pronta · fallback locale ${currentModel}` : (geminiSettings.apiKey ? `Pronta · Gemini ${geminiSettings.model}` : 'Pronta · configura la chiave Gemini'));
   }
 
   function buildQuickPatch(instruction) {
@@ -1112,7 +1281,7 @@ Individua elementi con il DOM reale. Non inventare selettori; usa fallback robus
     addMessage('user', instruction);
     sendBtn.disabled = true;
     inputEl.disabled = true;
-    setStatus(engine ? `Preparo la richiesta · fallback ${currentModel}` : 'Invio la richiesta all’AI remota gratuita…');
+    setStatus(engine ? `Preparo la richiesta · fallback ${currentModel}` : (geminiSettings.apiKey ? `Invio a Gemini · ${geminiSettings.model}…` : 'Richiesta AI · serve la chiave Gemini…'));
     try {
       const quickPatch = buildQuickPatch(instruction);
       if (quickPatch) {
@@ -1142,7 +1311,7 @@ Individua elementi con il DOM reale. Non inventare selettori; usa fallback robus
       }
       persistState();
       refreshMemoryLabel();
-      if (lastAIProvider) setStatus(`Pronta · ${lastAIProvider}`); else if (engine) setStatus(`Pronta · fallback locale ${currentModel}`); else setStatus('Pronta · AI remota senza chiave personale');
+      if (lastAIProvider) setStatus(`Pronta · ${lastAIProvider}`); else if (engine) setStatus(`Pronta · fallback locale ${currentModel}`); else setStatus(geminiSettings.apiKey ? `Pronta · Gemini ${geminiSettings.model}` : 'Pronta · configura la chiave Gemini');
     } catch (error) {
       showError(error);
     } finally {
@@ -1216,14 +1385,13 @@ Individua elementi con il DOM reale. Non inventare selettori; usa fallback robus
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startRestore, { once: true });
   else startRestore();
 
-  if (!navigator.gpu) {
-    setStatus('CPU/WASM disponibile · modifiche letterali immediate, AI locale per richieste complesse');
-  } else if (location.protocol === 'file:') {
-    setStatus('Rilevamento automatico · consigliato localhost/HTTPS');
+  if (location.protocol === 'file:') {
+    setStatus(geminiSettings.apiKey ? `Gemini pronto · ${geminiSettings.model} · fallback locale: usa HTTPS/localhost` : 'Configura la chiave Gemini dal pulsante ⚙');
   } else {
-    setStatus('Rilevamento automatico GPU/CPU');
+    setStatus(geminiSettings.apiKey ? `Gemini pronto · ${geminiSettings.model}` : 'Configura la chiave Gemini dal pulsante ⚙');
   }
 })();
+
 
 
 </script>
