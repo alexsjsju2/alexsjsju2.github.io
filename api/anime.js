@@ -41,7 +41,8 @@ export default async function handler(req, res) {
 
     try {
         if (req.method === 'POST') {
-            const { action, owner, listId, data, secret } = req.body;
+            const { action, owner, listId, data, secret, newId } = req.body;
+            if (secret !== process.env.API_SECRET) return res.status(401).json({ error: "Non autorizzato" });
 
             if (action === 'get_list') {
                 if (!owner || !listId) return res.status(400).json({ error: "Parametri mancanti" });
@@ -52,9 +53,24 @@ export default async function handler(req, res) {
 
             if (action === 'save_list') {
                 if (!owner || !listId || !data) return res.status(400).json({ error: "Parametri mancanti" });
-                if (secret !== process.env.API_SECRET) return res.status(401).json({ error: "Non autorizzato" });
-                
                 await db.collection(`anime_${owner}`).doc(listId).set({ items: data, lastUpdated: admin.firestore.FieldValue.serverTimestamp() });
+                return res.status(200).json({ success: true });
+            }
+
+            if (action === 'delete_list') {
+                if (!owner || !listId) return res.status(400).json({ error: "Parametri mancanti" });
+                await db.collection(`anime_${owner}`).doc(listId).delete();
+                return res.status(200).json({ success: true });
+            }
+
+            if (action === 'rename_list') {
+                if (!owner || !listId || !newId) return res.status(400).json({ error: "Parametri mancanti" });
+                const docRef = db.collection(`anime_${owner}`).doc(listId);
+                const doc = await docRef.get();
+                if (doc.exists) {
+                    await db.collection(`anime_${owner}`).doc(newId).set(doc.data());
+                    await docRef.delete();
+                }
                 return res.status(200).json({ success: true });
             }
 
